@@ -3,6 +3,8 @@ package com.exchange.settlement
 import com.github.dockerjava.api.model.Bind
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.async.ResultCallback
+import com.github.dockerjava.api.model.PullResponseItem
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.BindMode
 import org.testcontainers.containers.GenericContainer
@@ -10,6 +12,7 @@ import org.testcontainers.containers.wait.strategy.Wait
 import java.io.File
 import java.nio.file.Files
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /**
  * Wraps the two-phase TigerBeetle startup:
@@ -55,9 +58,18 @@ class TigerBeetleContainer : AutoCloseable {
      * Runs the format command to completion using the raw Docker client.
      * Using a raw one-shot container avoids Testcontainers' assumption that
      * containers should stay running.
+     *
+     * The raw client does not auto-pull images (unlike GenericContainer), so
+     * we pull explicitly before creating the container.
      */
     private fun runFormat() {
         val docker = DockerClientFactory.instance().client()
+
+        // Pull the image if not already present locally (idempotent on cache hit)
+        docker.pullImageCmd(IMAGE)
+            .exec(ResultCallback.Adapter<PullResponseItem>())
+            .awaitCompletion(120, TimeUnit.SECONDS)
+
         val containerId = docker.createContainerCmd(IMAGE)
             .withCmd("format", "--cluster=0", "--replica=0", "--replica-count=1", DATA_FILE)
             .withHostConfig(
