@@ -58,4 +58,12 @@ tasks.register<Test>("chaosTest") {
     classpath = sourceSets.test.get().runtimeClasspath
     // Forward the DOCKER_HOST env var if set (needed on some macOS setups)
     environment("DOCKER_HOST", System.getenv("DOCKER_HOST") ?: "unix:///var/run/docker.sock")
+    // Show full exception + stack trace in CI log so failures are self-contained
+    testLogging {
+        events("passed", "failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
 }
