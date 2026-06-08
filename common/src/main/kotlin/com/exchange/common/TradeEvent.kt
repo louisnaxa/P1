@@ -2,7 +2,7 @@ package com.exchange.common
 
 data class TradeEvent(
     val tradeId: Long,
-    val symbol: String,
+    val symbolId: Int,
     val makerOrderId: Long,
     val takerOrderId: Long,
     val makerUserId: Long,

@@ -5,6 +5,11 @@ plugins {
     id("io.spring.dependency-management") version "1.1.6" apply false
 }
 
+// Spring Boot 3.3.5 BOM provides Testcontainers 1.19.8 (docker-java 3.3.6).
+// docker-java 3.3.6 defaults to Docker API v1.24; Docker Desktop 29.x requires v1.40+.
+// Testcontainers 1.21.x uses docker-java 3.5.x which negotiates the version correctly.
+extra["testcontainers.version"] = "1.21.3"
+
 allprojects {
     group = "com.exchange"
     version = "0.0.1-SNAPSHOT"

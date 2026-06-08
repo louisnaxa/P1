@@ -22,5 +22,31 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build and test
+      - name: Build and test (unit + fast tests, no containers)
         run: ./gradlew build
+
+  chaos:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Chaos integration tests (real TigerBeetle + Kafka)
+        run: ./gradlew :settlement:chaosTest
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-test-report
+          path: settlement/build/reports/tests/chaosTest/
