@@ -14,7 +14,12 @@ import exchange.core2.core.common.api.ApiPlaceOrder
 import exchange.core2.core.common.api.binary.BatchAddSymbolsCommand
 import exchange.core2.core.common.cmd.CommandResultCode
 import exchange.core2.core.common.config.ExchangeConfiguration
-import exchange.core2.core.processors.journaling.DiskSerializationProcessorConfiguration
+import exchange.core2.core.common.config.InitialStateConfiguration
+import exchange.core2.core.common.config.LoggingConfiguration
+import exchange.core2.core.common.config.OrdersProcessingConfiguration
+import exchange.core2.core.common.config.PerformanceConfiguration
+import exchange.core2.core.common.config.ReportsQueriesConfiguration
+import exchange.core2.core.common.config.SerializationConfiguration
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.concurrent.CopyOnWriteArrayList
@@ -28,6 +33,7 @@ class MatchingEngineService {
     private val log = LoggerFactory.getLogger(javaClass)
 
     private val tradeIdSeq = AtomicLong(1)
+    private val txIdSeq = AtomicLong(1)
     private val trades = CopyOnWriteArrayList<TradeEvent>()
 
     private lateinit var exchangeCore: ExchangeCore
@@ -36,10 +42,14 @@ class MatchingEngineService {
     @PostConstruct
     fun init() {
         val conf = ExchangeConfiguration.defaultBuilder()
-            .serializationProcessorFactory(DiskSerializationProcessorConfiguration::createEncoder)
+            .initStateCfg(InitialStateConfiguration.CLEAN_TEST)
+            .serializationCfg(SerializationConfiguration.DEFAULT)
             .build()
 
         exchangeCore = ExchangeCore.builder()
+            .resultsConsumer { cmd, _ ->
+                log.trace("Result: {}", cmd)
+            }
             .exchangeConfiguration(conf)
             .build()
 
@@ -79,7 +89,7 @@ class MatchingEngineService {
 
     fun adjustBalance(uid: Long, currency: Int, amount: Long) {
         val result = api.submitCommandAsync(
-            ApiAdjustUserBalance(uid, currency, amount, 0L)
+            ApiAdjustUserBalance(uid, currency, amount, txIdSeq.getAndIncrement())
         ).get()
         check(result == CommandResultCode.SUCCESS) { "adjustBalance failed: $result" }
     }
@@ -101,6 +111,7 @@ class MatchingEngineService {
             .uid(uid)
             .orderId(orderId)
             .price(price)
+            .reservePrice(if (side == OrderSide.BID) price else 0L)
             .size(size)
             .action(action)
             .orderType(OrderType.GTC)

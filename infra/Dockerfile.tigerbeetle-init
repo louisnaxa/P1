@@ -1,0 +1,6 @@
+FROM ghcr.io/tigerbeetle/tigerbeetle:0.16.11 AS tb
+FROM alpine:3.19
+COPY --from=tb /tigerbeetle /usr/local/bin/tigerbeetle
+COPY tigerbeetle-init.sh /init.sh
+RUN chmod +x /init.sh
+ENTRYPOINT ["/init.sh"]

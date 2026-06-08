@@ -39,11 +39,13 @@ class MatchingEngineTest {
         engine.addUser(ALICE_UID)
         engine.addUser(BOB_UID)
 
-        // Give Alice quote currency (USDT) to buy
-        engine.adjustBalance(ALICE_UID, QUOTE_CURRENCY, 1_000_000L)
+        // Give Alice both currencies
+        engine.adjustBalance(ALICE_UID, QUOTE_CURRENCY, 1_000_000_000L)
+        engine.adjustBalance(ALICE_UID, BASE_CURRENCY, 1_000_000L)
 
-        // Give Bob base currency (FOO) to sell
-        engine.adjustBalance(BOB_UID, BASE_CURRENCY, 1_000L)
+        // Give Bob both currencies
+        engine.adjustBalance(BOB_UID, BASE_CURRENCY, 1_000_000L)
+        engine.adjustBalance(BOB_UID, QUOTE_CURRENCY, 1_000_000_000L)
     }
 
     @AfterEach
