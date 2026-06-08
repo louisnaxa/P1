@@ -1,0 +1,12 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: engine
+  kafka:
+    bootstrap-servers: localhost:9092
+
+logging:
+  level:
+    com.exchange: DEBUG
