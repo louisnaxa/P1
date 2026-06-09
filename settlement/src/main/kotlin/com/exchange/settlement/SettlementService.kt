@@ -180,13 +180,14 @@ class SettlementService(private val tb: Client) {
      * POST_PENDING_TRANSFER — zero is not treated as "inherit from pending transfer".
      * Idempotent: Exists is silently ignored.
      */
-    fun postPendingWithdrawal(pendingId: Long, userId: Long, ledgerId: Int) {
+    fun postPendingWithdrawal(pendingId: Long, userId: Long, ledgerId: Int, amount: Long) {
         val batch = TransferBatch(1)
         batch.add()
         batch.setId(pendingId or 1L)
         batch.setPendingId(pendingId)
         batch.setDebitAccountId(AccountIds.available(userId, ledgerId))
         batch.setCreditAccountId(AccountIds.external(ledgerId))
+        batch.setAmount(amount)   // TB 0.16.x: 0 on POST_PENDING posts zero, not the full pending amount
         batch.setLedger(ledgerId)
         batch.setCode(200)
         batch.setFlags(TransferFlags.POST_PENDING_TRANSFER)

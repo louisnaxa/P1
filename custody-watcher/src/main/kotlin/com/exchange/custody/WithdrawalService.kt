@@ -91,13 +91,14 @@ class WithdrawalService(
      * there is no reference to signer in this method.
      */
     fun confirmBroadcast() {
-        val rows = jdbc.queryForList("SELECT id, uid, currency, tb_pending_id FROM withdrawals WHERE state = 'BROADCAST'")
+        val rows = jdbc.queryForList("SELECT id, uid, currency, amount, tb_pending_id FROM withdrawals WHERE state = 'BROADCAST'")
         for (row in rows) {
             val id          = row["id"] as Long
             val uid         = row["uid"] as Long
             val currency    = row["currency"] as Int
+            val amount      = row["amount"] as Long
             val tbPendingId = row["tb_pending_id"] as Long
-            settlement.postPendingWithdrawal(tbPendingId, uid, currency)
+            settlement.postPendingWithdrawal(tbPendingId, uid, currency, amount)
             jdbc.update(
                 "UPDATE withdrawals SET state = 'CONFIRMED', updated_at = NOW() WHERE id = ? AND state = 'BROADCAST'",
                 id
