@@ -58,16 +58,25 @@ class EngineCommandConsumer(
                 assignments.keys.associateWith { OffsetSpec.latest() }
             ).all().get(10, TimeUnit.SECONDS)
 
+            val earliestOffsets = admin.listOffsets(
+                assignments.keys.associateWith { OffsetSpec.earliest() }
+            ).all().get(10, TimeUnit.SECONDS)
+
             assignments.keys.forEach { tp ->
-                val endOffset = latestOffsets[tp]?.offset() ?: 0L
-                log.info("EngineCommandConsumer partition={} endOffset={}", tp, endOffset)
-                if (endOffset > 0L) {
+                val endOffset   = latestOffsets[tp]?.offset()   ?: 0L
+                val startOffset = earliestOffsets[tp]?.offset() ?: 0L
+                log.info("EngineCommandConsumer partition={} startOffset={} endOffset={}", tp, startOffset, endOffset)
+                // Only wait for records when there are records to consume.
+                // If startOffset >= endOffset (empty topic or all records deleted by
+                // compaction/retention), seekToBeginning leaves the consumer at endOffset
+                // and onCommand never fires — so signal immediately instead.
+                if (startOffset < endOffset) {
                     replayTargets[tp] = endOffset
                 }
             }
 
             if (replayTargets.isEmpty()) {
-                log.info("Commands topic empty at assignment — engine replay complete immediately")
+                log.info("No records to replay — engine replay complete immediately")
                 engine.signalReplayComplete()
             }
         }

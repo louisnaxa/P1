@@ -56,6 +56,8 @@ class MatchingEngineService(
             log.info("Engine replay complete — orderbook snapshot publication active")
     }
 
+    fun isReplayComplete(): Boolean = replayComplete.get()
+
     private lateinit var exchangeCore: ExchangeCore
     private lateinit var api: ExchangeApi
 
