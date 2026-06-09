@@ -95,3 +95,34 @@ elle commence à faire mal ou avant le lancement réel.
 Si tu tournes plus de quelques minutes sans produire de sortie : arrête, rétrécis le problème,
 et expose le constat factuel (ce qui est observé vs attendu) avant de tenter une correction.
 Ne t'acharne pas sur un test qui ne conditionne pas le jalon courant.
+
+
+---
+
+## Pièges déjà rencontrés (règles issues d'erreurs réelles)
+
+### P-1 — Tests Docker / Testcontainers : jamais en local sur macOS
+
+Ne jamais lancer les tests d'intégration (chaos, Testcontainers : TigerBeetle, Kafka) en local
+sur macOS / Docker Desktop. Le socket de Docker Desktop n'est pas négociable proprement par
+Testcontainers — c'est un puits de temps déjà rencontré deux fois (essais de `docker.sock`,
+`docker.raw.sock`, `.testcontainers.properties`, désactivation du daemon Gradle… tout échoue).
+
+Règle :
+- **En local, on se limite à la compilation** (`./gradlew :module:compileTestKotlin`).
+- **Les tests d'intégration font foi uniquement en CI** (GitHub Actions, `ubuntu-latest`,
+  Docker standard) — c'est l'environnement de référence décidé pour ces tests.
+- Pour vérifier un test d'intégration : **committer, pousser, lire le résultat du job dans
+  l'onglet Actions**. Jamais bricoler le socket Docker local.
+- Si un contournement de socket local est tenté, c'est une régression de méthode : arrête-toi.
+
+### P-2 — Ne pas raisonner en boucle sur un problème non reproduit
+
+Si un bug est soupçonné mais pas reproduit, ne pas enchaîner les hypothèses en boucle.
+Écrire le test qui tranche, l'exécuter, et conclure sur le résultat — pas sur le raisonnement.
+
+Règle :
+- Sur un doute, la première action est **un test qui donne un résultat binaire**, pas une analyse.
+- Si le problème n'est pas reproduit après **deux essais**, s'arrêter et signaler le constat
+  factuel (observé vs attendu) au lieu de continuer à chercher.
+- Un soupçon n'est pas un bug : ne pas corriger un comportement qu'aucun test ne met en défaut.

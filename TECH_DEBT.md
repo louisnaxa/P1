@@ -172,3 +172,23 @@ Fix : introduire deux adresses on-chain (hot + cold), une logique de sweep autom
 with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
 
 **Planned milestone**: M6 / infrastructure custody avancée.
+
+---
+
+## TD-12 — Test isolé layer-2 manquant : même commande à deux offsets Kafka différents
+
+**Location**: `AdjustBalanceConsumer` — le chemin SHA-256 n'est couvert que de manière
+indirecte par `DepositChaosIntegrationTest` (le watcher ne re-publie pas → TigerBeetle
+n'est pas appelé deux fois).
+
+**Cas non couvert** : si le watcher *échouait* à dédupliquer (layer 1 percé), est-ce que
+TigerBeetle absorberait quand même le doublon grâce au SHA-256 transferId (layer 2) ?
+Preuve attendue :
+1. Publier deux `ADJUST_BALANCE` avec le même `onChainRef` mais à des offsets Kafka distincts.
+2. Appeler `AdjustBalanceConsumer.onCommand()` pour chaque.
+3. Vérifier que `SettlementService.getBalance()` = montant d'un seul dépôt.
+
+Ce test confirme que les deux couches sont vraiment indépendantes — ni l'une ni l'autre
+seule n'est un point de défaillance unique.
+
+**Planned milestone**: M4 follow-up ou lors de la prochaine revue de couverture settlement.

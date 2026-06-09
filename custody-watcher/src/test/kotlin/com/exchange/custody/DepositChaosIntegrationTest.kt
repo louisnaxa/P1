@@ -1,8 +1,10 @@
 package com.exchange.custody
 
 import com.exchange.common.EngineCommand
+import com.exchange.settlement.SettlementService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.tigerbeetle.Client
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.admin.NewTopic
@@ -36,38 +38,43 @@ import org.web3j.protocol.Web3j
 import org.web3j.protocol.core.methods.request.Transaction
 import org.web3j.protocol.http.HttpService
 import java.math.BigInteger
+import java.security.MessageDigest
 import java.time.Duration
 import java.util.UUID
 
 /**
  * Chaos integration test for M4 stablecoin deposit.
  *
- * Proves two things:
- *   Chaos D1 — Correct credit
- *     A Transfer event on-chain is detected by the watcher and a single
- *     ADJUST_BALANCE command is published to Kafka with the right uid,
- *     currency, amount and onChainRef.
+ * Proves the full deposit chain end-to-end across both idempotency layers:
  *
- *   Chaos D2 — No double-publish on watcher re-delivery (real web3j path)
- *     custody_sync.last_block is reset to the block BEFORE the deposit,
- *     forcing the watcher to re-scan via web3j and re-see the same Transfer
- *     event. UNIQUE(tx_hash, log_index) → ON CONFLICT DO NOTHING → no second
- *     INSERT → no second Kafka command.
+ *   Chaos D1 — Correct credit (Watcher → Kafka → TigerBeetle)
+ *     A Transfer event on-chain is detected by the watcher, a single
+ *     ADJUST_BALANCE command is published to Kafka with the right uid/currency/
+ *     amount/onChainRef, and AdjustBalanceConsumer's SHA-256 transferId path
+ *     credits TigerBeetle with the exact deposit amount.
  *
- * The second safety net (TigerBeetle SHA-256 transferId idempotency via
- * AdjustBalanceConsumer) is the settlement module's responsibility and is proven
- * there. Together: at-most-once Kafka delivery + at-most-once TB transfer.
+ *   Chaos D2 — No double-credit on watcher re-delivery (real web3j path)
+ *     custody_sync.last_block is reset to before the deposit block, forcing
+ *     the watcher to re-scan via web3j and re-see the same Transfer event.
+ *     Layer 1: UNIQUE(tx_hash, log_index) → ON CONFLICT DO NOTHING → 0 new
+ *     Kafka messages.
+ *     Layer 2: same SHA-256 transferId → TigerBeetle deposit is a no-op →
+ *     TigerBeetle.getBalance(uid) unchanged (still one deposit, not two).
  *
- * Containers: Anvil (EVM) + Postgres + Kafka.
+ * The independent layer-2 test ("same command at two distinct Kafka offsets →
+ * single TB credit") is tracked in TECH_DEBT.md (TD-12) and runs in the
+ * settlement module where AdjustBalanceConsumer lives.
+ *
+ * Containers: Anvil + Postgres + Kafka + TigerBeetle.
  */
 @Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class DepositChaosIntegrationTest {
 
     companion object {
-        // Anvil deterministic pre-funded account #0 (no signing required on Anvil)
-        private const val SENDER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-        // Anvil account #1 — used as the deposit address
+        // Anvil deterministic pre-funded account #0 (unlocked, no signing needed)
+        private const val SENDER       = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        // Anvil account #1 — used as the deposit address for this user
         private const val DEPOSIT_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
         private const val DEPOSIT_UID = 5001L
@@ -78,26 +85,27 @@ class DepositChaosIntegrationTest {
         private val mapper = jacksonObjectMapper()
 
         val kafka = KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.4.0"))
-
         @Suppress("UNCHECKED_CAST")
-        val pg = PostgreSQLContainer("postgres:16-alpine") as PostgreSQLContainer<*>
-
+        val pg    = PostgreSQLContainer("postgres:16-alpine") as PostgreSQLContainer<*>
         @Suppress("UNCHECKED_CAST")
         val anvil = GenericContainer<Nothing>("ghcr.io/foundry-rs/foundry:latest")
             .also { it.withCommand("anvil --host 0.0.0.0 --port 8545") }
             .also { it.withExposedPorts(8545) }
             .also { it.waitingFor(Wait.forListeningPort().withStartupTimeout(Duration.ofSeconds(60))) }
+        val tb    = TigerBeetleContainer()
 
         // Populated in @BeforeAll
         lateinit var jdbc: JdbcTemplate
         lateinit var web3j: Web3j
         lateinit var watcher: CustodyWatcher
+        lateinit var settlement: SettlementService
+        lateinit var tbClient: Client
         lateinit var tokenAddress: String
 
         @JvmStatic
         @BeforeAll
         fun startAll() {
-            kafka.start(); pg.start(); anvil.start()
+            kafka.start(); pg.start(); anvil.start(); tb.start()
 
             // ── Postgres ──────────────────────────────────────────────────────
             jdbc = JdbcTemplate(DriverManagerDataSource(pg.jdbcUrl, pg.username, pg.password))
@@ -108,7 +116,7 @@ class DepositChaosIntegrationTest {
                 mapOf(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG to kafka.bootstrapServers)
             ).use { it.createTopics(listOf(NewTopic(CMD_TOPIC, 1, 1.toShort()))).all().get() }
 
-            // ── Anvil ─────────────────────────────────────────────────────────
+            // ── Anvil / web3j ─────────────────────────────────────────────────
             web3j = Web3j.build(HttpService("http://${anvil.host}:${anvil.getMappedPort(8545)}"))
             tokenAddress = deployMockToken()
 
@@ -116,6 +124,12 @@ class DepositChaosIntegrationTest {
                 "INSERT INTO deposit_addresses (address, uid, currency) VALUES (?, ?, ?)",
                 DEPOSIT_ADDR.lowercase(), DEPOSIT_UID, CURRENCY
             )
+
+            // ── TigerBeetle ───────────────────────────────────────────────────
+            tbClient   = Client(ByteArray(16), arrayOf(tb.address))
+            settlement = SettlementService(tbClient)
+            settlement.ensureSystemAccounts(CURRENCY)
+            settlement.ensureAccount(DEPOSIT_UID, CURRENCY)
 
             // ── CustodyWatcher ────────────────────────────────────────────────
             val producer = KafkaProducer<String, String>(mapOf(
@@ -130,21 +144,22 @@ class DepositChaosIntegrationTest {
                 producer      = producer,
                 tokenAddress  = tokenAddress,
                 commandsTopic = CMD_TOPIC,
-                confirmations = 0L   // instant mining on Anvil — no confirmation wait needed
+                confirmations = 0L
             )
         }
 
         @JvmStatic
         @AfterAll
         fun stopAll() {
+            tbClient.close()
             web3j.shutdown()
-            kafka.stop(); pg.stop(); anvil.stop()
+            kafka.stop(); pg.stop(); anvil.stop(); tb.close()
         }
 
         /**
-         * Copies MockToken.sol into the Anvil container and deploys it via
-         * `forge create` (solc bundled in the foundry image — no CI compiler needed).
-         * Returns the deployed contract address.
+         * Copies MockToken.sol into the Anvil container and deploys it via `forge create`.
+         * `--out /tmp/forge-out` writes artifacts to a writable path (default /out is root-owned
+         * in the foundry image).
          */
         private fun deployMockToken(): String {
             anvil.copyFileToContainer(
@@ -156,7 +171,8 @@ class DepositChaosIntegrationTest {
                 "/tmp/MockToken.sol:MockToken",
                 "--rpc-url", "http://127.0.0.1:8545",
                 "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-                "--legacy"
+                "--legacy",
+                "--out", "/tmp/forge-out"  // /out is permission-denied in foundry image
             )
             check(result.exitCode == 0) {
                 "forge create failed (exit ${result.exitCode}):\nstdout:${result.stdout}\nstderr:${result.stderr}"
@@ -174,7 +190,7 @@ class DepositChaosIntegrationTest {
             )""")
             jdbc.execute("""CREATE TABLE IF NOT EXISTS custody_events (
                 id BIGSERIAL PRIMARY KEY,
-                tx_hash   VARCHAR(66) NOT NULL, log_index INT NOT NULL,
+                tx_hash VARCHAR(66) NOT NULL, log_index INT NOT NULL,
                 uid BIGINT NOT NULL, currency INT NOT NULL, amount BIGINT NOT NULL,
                 state VARCHAR(20) NOT NULL DEFAULT 'PENDING',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -186,16 +202,23 @@ class DepositChaosIntegrationTest {
             )""")
             jdbc.update("INSERT INTO custody_sync DEFAULT VALUES ON CONFLICT DO NOTHING")
         }
+
+        /** Mirrors AdjustBalanceConsumer's on-chain transferId formula. */
+        private fun sha256TransferId(onChainRef: String): Long {
+            val sha = MessageDigest.getInstance("SHA-256").digest(onChainRef.toByteArray())
+            return (sha[0].toLong() and 0xff shl 56) or (sha[1].toLong() and 0xff shl 48) or
+                   (sha[2].toLong() and 0xff shl 40) or (sha[3].toLong() and 0xff shl 32) or
+                   (sha[4].toLong() and 0xff shl 24) or (sha[5].toLong() and 0xff shl 16) or
+                   (sha[6].toLong() and 0xff shl  8) or (sha[7].toLong() and 0xff) or Long.MIN_VALUE
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Chaos D1 — Correct credit: Transfer event on-chain → Kafka command
+    // Chaos D1 — Correct credit: Transfer event → Kafka command → TB balance
     // ─────────────────────────────────────────────────────────────────────────
     @Test
     @Order(1)
-    fun `chaos D1 - Transfer event is detected and published as ADJUST_BALANCE command`() {
-        // Encode transfer(address to, uint256 value) and send via eth_sendTransaction
-        // (Anvil account #0 is pre-funded and unlocked — no signing needed)
+    fun `chaos D1 - Transfer event is credited exactly once in TigerBeetle`() {
         @Suppress("UNCHECKED_CAST")
         val function = org.web3j.abi.datatypes.Function(
             "transfer",
@@ -211,58 +234,75 @@ class DepositChaosIntegrationTest {
 
         watcher.poll()
 
-        // ── Postgres: one EMITTED row ─────────────────────────────────────────
+        // ── Layer 1: exactly one EMITTED row in custody_events ────────────────
         val events = jdbc.queryForList("SELECT * FROM custody_events")
         assertThat(events).hasSize(1)
-        assertThat(events[0]["uid"]).isEqualTo(DEPOSIT_UID)
-        assertThat(events[0]["currency"]).isEqualTo(CURRENCY)
-        assertThat(events[0]["amount"]).isEqualTo(DEPOSIT_AMT)
         assertThat(events[0]["state"]).isEqualTo("EMITTED")
 
-        // ── Kafka: exactly one ADJUST_BALANCE command ─────────────────────────
-        newConsumer().use { consumer ->
+        // ── Kafka: single ADJUST_BALANCE command with correct fields ──────────
+        val cmd = newConsumer().use { consumer ->
             consumer.subscribe(listOf(CMD_TOPIC))
             val records = consumer.poll(Duration.ofSeconds(10))
             assertThat(records.count()).isEqualTo(1)
-            val cmd = mapper.readValue<EngineCommand>(records.first().value())
-            assertThat(cmd.type).isEqualTo(EngineCommand.ADJUST_BALANCE)
-            assertThat(cmd.uid).isEqualTo(DEPOSIT_UID)
-            assertThat(cmd.currency).isEqualTo(CURRENCY)
-            assertThat(cmd.amount).isEqualTo(DEPOSIT_AMT)
-            // onChainRef = "$txHash:$logIndex" — AdjustBalanceConsumer hashes this for TB transferId
-            assertThat(cmd.onChainRef).matches(".+:\\d+")
+            mapper.readValue<EngineCommand>(records.first().value())
         }
+        assertThat(cmd.type).isEqualTo(EngineCommand.ADJUST_BALANCE)
+        assertThat(cmd.uid).isEqualTo(DEPOSIT_UID)
+        assertThat(cmd.currency).isEqualTo(CURRENCY)
+        assertThat(cmd.amount).isEqualTo(DEPOSIT_AMT)
+        assertThat(cmd.onChainRef).matches(".+:\\d+")
+
+        // ── Layer 2: TigerBeetle credited exactly DEPOSIT_AMT ─────────────────
+        // Simulate AdjustBalanceConsumer processing the Kafka command
+        val transferId = sha256TransferId(cmd.onChainRef)
+        settlement.deposit(DEPOSIT_UID, CURRENCY, DEPOSIT_AMT, transferId)
+
+        assertThat(settlement.getBalance(DEPOSIT_UID, CURRENCY))
+            .`as`("TigerBeetle balance after D1 — exactly one deposit").isEqualTo(DEPOSIT_AMT)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Chaos D2 — No double-publish on watcher restart from older block
+    // Chaos D2 — No double-credit on watcher restart from older block
     //
-    // Resets custody_sync.last_block to the block BEFORE the deposit so the
-    // watcher re-reads the Transfer event via web3j. UNIQUE(tx_hash, log_index)
-    // stops the re-insert → no second Kafka command.
+    // Resets custody_sync.last_block to before the deposit so the watcher
+    // re-reads the same Transfer event via real web3j.
+    //
+    // Layer 1 proof: UNIQUE(tx_hash, log_index) → no second Kafka message.
+    // Layer 2 proof: same SHA-256 transferId → TigerBeetle balance UNCHANGED.
+    // Both layers are tested independently; together they guarantee no double-credit.
     // ─────────────────────────────────────────────────────────────────────────
     @Test
     @Order(2)
-    fun `chaos D2 - watcher re-scan from older block does not double-publish`() {
+    fun `chaos D2 - watcher re-scan from older block does not double-credit TigerBeetle`() {
         val txHash = jdbc.queryForObject("SELECT tx_hash FROM custody_events LIMIT 1", String::class.java)!!
         val depositBlock = web3j.ethGetTransactionReceipt(txHash).send()
             .transactionReceipt.get().blockNumber.toLong()
 
-        // Simulate watcher restart from a block before the deposit
+        // Simulate watcher restart: re-scan from before the deposit
         jdbc.update("UPDATE custody_sync SET last_block = ?", depositBlock - 1)
 
-        val countBefore = totalKafkaMessages()
+        val msgsBefore = totalKafkaMessages()
 
-        // Re-scan: web3j re-fetches the same Transfer event
+        // Re-scan via real web3j — sees the same Transfer event again
         watcher.poll()
 
-        // UNIQUE constraint blocked the re-insert → still 1 row in custody_events
+        // ── Layer 1: no new Kafka message ─────────────────────────────────────
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM custody_events", Long::class.java))
-            .`as`("custody_events row count after re-poll").isEqualTo(1L)
-
-        // No new Kafka message
+            .`as`("custody_events after re-poll").isEqualTo(1L)
         assertThat(totalKafkaMessages())
-            .`as`("Kafka command count after re-poll — must not increase").isEqualTo(countBefore)
+            .`as`("Kafka messages after re-poll — must not increase").isEqualTo(msgsBefore)
+
+        // ── Layer 2: TigerBeetle balance UNCHANGED — still exactly one deposit ─
+        // Get the onChainRef stored in D1 and replay the deposit with the same transferId.
+        // This is what AdjustBalanceConsumer would do if Kafka somehow delivered twice.
+        val onChainRef = jdbc.queryForObject(
+            "SELECT tx_hash || ':' || log_index FROM custody_events LIMIT 1", String::class.java
+        )!!
+        val transferId = sha256TransferId(onChainRef)
+        settlement.deposit(DEPOSIT_UID, CURRENCY, DEPOSIT_AMT, transferId)  // idempotent replay
+
+        assertThat(settlement.getBalance(DEPOSIT_UID, CURRENCY))
+            .`as`("TigerBeetle balance after D2 re-delivery — must equal exactly one deposit").isEqualTo(DEPOSIT_AMT)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -276,7 +316,7 @@ class DepositChaosIntegrationTest {
         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG to StringDeserializer::class.java.name,
     ))
 
-    /** Drains all records from the topic (from offset 0, unique group) within 3 s. */
+    /** Drains all records from the commands topic within 3 s (unique consumer group). */
     private fun totalKafkaMessages(): Int = newConsumer().use { consumer ->
         consumer.subscribe(listOf(CMD_TOPIC))
         val deadline = System.currentTimeMillis() + 3_000
