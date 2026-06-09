@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 9 juin 2026 :** M0, M1 et **M2 franchis et prouvés** (CI verte, tests chaos + E2E réels). Jalon courant : **M3**.
+> **État au 9 juin 2026 :** M0, M1 et **M2 franchis et prouvés** (CI verte, tests chaos + E2E réels). Jalon courant : **M3**. M4 en cours : dépôt et retrait (verrou + machine d'état + nonce) prouvés en CI ; signature/diffusion MPC réelle + confirmations on-chain + résolution trou de nonce restent à valider en environnement MPC.
 
 ---
 
@@ -84,10 +84,13 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 
 ### M4 — Custody réelle (2e zone à haut risque)
 
-- [ ] Dépôt stablecoin avec N confirmations → crédite le registre **puis** le moteur
-- [ ] Retrait : débite-et-verrouille **puis** diffuse on-chain
-- [ ] Un événement rejoué ne crédite jamais deux fois
+- [x] Dépôt stablecoin : idempotence layer-1 (Postgres UNIQUE tx_hash+log_index) + layer-2 (SHA-256 transferId TB) — prouvée en CI sans outillage blockchain (AdjustBalanceIdempotencyTest D1+D2)
+- [x] Retrait — verrou + machine d'état (LOCKED→BROADCAST→CONFIRMED|VOID) : TB PENDING avant DB row, anti-double-broadcast structural, conservation prouvée — CI vert (W1–W7)
+- [x] Retrait — nonce : réservation durable avant sign(), ordre diffusion nonce ASC obligatoire, reprise crash-3b (même nonce réutilisé) — CI vert (N8–N9)
+- [ ] Retrait — signature/diffusion MPC réelle : `WithdrawalSigner` production, raw_tx on-chain, watcher confirmations (BROADCAST→CONFIRMED on-chain) — à valider en intégration MPC, hors CI
+- [ ] Retrait — résolution trou de nonce (transaction d'annulation si nonce bloqué) — MPC sub-lot suivant
 - [ ] Gestion des clés revue par quelqu'un de compétent
+- [ ] Un événement rejoué ne crédite jamais deux fois ✓ (prouvé en layer-2 idempotency)
 
 ### M5 — Utilisable
 

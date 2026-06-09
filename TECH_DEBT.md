@@ -175,6 +175,24 @@ with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
 
 ---
 
+## TD-13 — Retrait : signature/diffusion/confirmations MPC et résolution trou de nonce
+
+**Scope** : tout ce qui se passe après `WithdrawalSigner.sign()` dans la production réelle.
+
+**Reporté à l'intégration MPC — hors CI** :
+
+- **Signature réelle** : `WithdrawalSigner` production délègue au prestataire MPC ; `raw_tx` persisté avant diffusion (crash-3a : rediffuser depuis DB sans re-signer).
+- **Diffusion on-chain** : envoi du `raw_tx` au nœud Ethereum ; `tx_hash` déjà en DB avant l'appel réseau.
+- **Confirmations on-chain** : le watcher scrute les blocs ; dès N confirmations sur `tx_hash` → `confirmBroadcast()` (idempotent via TB Exists). État BROADCAST→CONFIRMED piloté par la chaîne, pas par le signer.
+- **Résolution trou de nonce** : si un nonce N reste non miné au-delà du TTL, émettre une transaction de remplacement (`gasPrice` élevé, `to=self`, `value=0`) sur le même nonce pour débloquer N+1, N+2, etc. Logique de cancellation dans le sub-lot MPC suivant.
+- **Gestion des erreurs on-chain** : transaction dropped / replaced / nonce trop ancien → VOID ou retry selon la politique. Non couvert par les tests CI actuels.
+
+**Ce qui est prouvé en CI et ne sera PAS retouché** : verrou TB PENDING, machine d'état LOCKED→BROADCAST→CONFIRMED|VOID, conservation des montants, nonce durable + ordre ASC, crash-1/2/3b.
+
+**Planned milestone**: intégration MPC + audit custody.
+
+---
+
 ## TD-12 — ~~Test isolé layer-2 manquant : même commande à deux offsets Kafka différents~~ ✓ CLOSED
 
 **Fixed**: `settlement:AdjustBalanceIdempotencyTest` — D1 + D2 prouvent la protection contre
