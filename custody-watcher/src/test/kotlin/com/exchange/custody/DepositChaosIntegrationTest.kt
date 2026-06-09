@@ -157,32 +157,43 @@ class DepositChaosIntegrationTest {
         }
 
         /**
-         * Copies MockToken.sol into the Anvil container and deploys it via `forge create`.
-         * `--out /tmp/forge-out` writes artifacts to a writable path (default /out is root-owned
-         * in the foundry image).
+         * Copies MockToken.sol into the Anvil container, compiles and deploys it via
+         * `forge create`. Address is recovered from the Anvil transaction receipt via
+         * web3j — no parsing of forge's stdout format (which varies across versions).
+         *
+         * Root-owned paths in the foundry image are redirected to /tmp:
+         *   FOUNDRY_CACHE_PATH — overrides /cache
+         *   --out /tmp/forge-out — overrides /out
          */
         private fun deployMockToken(): String {
             anvil.copyFileToContainer(
                 MountableFile.forClasspathResource("contracts/MockToken.sol"),
                 "/tmp/MockToken.sol"
             )
-            // FOUNDRY_CACHE_PATH overrides the image default (/cache, root-owned).
-            // --out overrides artifact output (/out, also root-owned).
             val result = anvil.execInContainer(
                 "sh", "-c",
                 "FOUNDRY_CACHE_PATH=/tmp/foundry-cache forge create /tmp/MockToken.sol:MockToken" +
                 " --rpc-url http://127.0.0.1:8545" +
                 " --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" +
-                " --legacy --out /tmp/forge-out"
+                " --legacy --out /tmp/forge-out 2>&1"
             )
             check(result.exitCode == 0) {
-                "forge create failed (exit ${result.exitCode}):\nstdout:${result.stdout}\nstderr:${result.stderr}"
+                "forge create failed (exit ${result.exitCode}):\n${result.stdout}"
             }
-            return result.stdout.lines()
-                .firstOrNull { it.trimStart().startsWith("Deployed to:") }
-                ?.substringAfter("Deployed to:")
-                ?.trim()
-                ?: error("Could not parse deployed address from:\n${result.stdout}")
+
+            // Retrieve the deployed contract address from the transaction receipt.
+            // Avoids parsing forge's stdout (format changed in newer foundry versions).
+            // Anvil mines instantly, so the deployment tx is in the latest block.
+            val block = web3j.ethGetBlockByNumber(
+                org.web3j.protocol.core.DefaultBlockParameterName.LATEST, false
+            ).send()
+            for (txResult in block.block.transactions) {
+                val txHash = txResult.get() as String
+                val receipt = web3j.ethGetTransactionReceipt(txHash).send()
+                    .transactionReceipt.orElse(null) ?: continue
+                if (receipt.contractAddress != null) return receipt.contractAddress
+            }
+            error("No contract creation transaction found in latest Anvil block")
         }
 
         private fun createSchema() {
