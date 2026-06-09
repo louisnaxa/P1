@@ -1,7 +1,9 @@
 package com.exchange.engine
 
 import com.exchange.common.EngineCommand
+import com.exchange.common.OrderBookEvent
 import com.exchange.common.OrderSide
+import com.exchange.common.PriceLevel
 import com.exchange.common.TradeEvent
 import exchange.core2.core.ExchangeApi
 import exchange.core2.core.ExchangeCore
@@ -21,7 +23,9 @@ import exchange.core2.core.common.config.ExchangeConfiguration
 import exchange.core2.core.common.config.InitialStateConfiguration
 import exchange.core2.core.common.config.SerializationConfiguration
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
@@ -35,11 +39,22 @@ import jakarta.annotation.PreDestroy
  */
 @Service
 class MatchingEngineService(
-    private val tradePublisher: (TradeEvent) -> Unit = {}
+    private val tradePublisher: (TradeEvent) -> Unit = {},
+    private val orderbookPublisher: (OrderBookEvent) -> Unit = {},
+    @Value("\${exchange.orderbook.depth:20}") private val orderbookDepth: Int = 20
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
     private val txIdSeq = AtomicLong(1)
+
+    // Set by EngineCommandConsumer once the initial Kafka replay is complete.
+    // Orderbook snapshots are suppressed during replay to avoid flooding the topic.
+    private val replayComplete = AtomicBoolean(false)
+
+    fun signalReplayComplete() {
+        if (replayComplete.compareAndSet(false, true))
+            log.info("Engine replay complete — orderbook snapshot publication active")
+    }
 
     private lateinit var exchangeCore: ExchangeCore
     private lateinit var api: ExchangeApi
@@ -124,7 +139,26 @@ class MatchingEngineService(
                 tradeId, raw.takerSide, raw.size, raw.price, raw.takerUserId, raw.makerUserId)
         }
 
+        // Publish L2 snapshot AFTER all trades are durable in Kafka.
+        // Fire-and-forget, isolated: failure here never affects trade or settlement.
+        // Suppressed during replay so the orderbook topic stays lean.
+        if (replayComplete.get() &&
+            (cmd.type == EngineCommand.PLACE_ORDER || cmd.type == EngineCommand.CANCEL_ORDER)) {
+            publishSnapshot(cmd.symbolId)
+        }
+
         return result
+    }
+
+    private fun publishSnapshot(symbolId: Int) {
+        try {
+            val l2 = api.requestOrderBookAsync(symbolId, orderbookDepth).get()
+            val bids = (0 until l2.bidSize).map { i -> PriceLevel(l2.bidPrices[i], l2.bidVolumes[i]) }
+            val asks = (0 until l2.askSize).map { i -> PriceLevel(l2.askPrices[i], l2.askVolumes[i]) }
+            orderbookPublisher(OrderBookEvent(symbolId, bids, asks))
+        } catch (e: Exception) {
+            log.warn("Orderbook snapshot failed for symbol={}: {}", symbolId, e.message)
+        }
     }
 
     // -- Disruptor callback (runs on Disruptor thread) --

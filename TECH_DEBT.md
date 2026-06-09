@@ -81,3 +81,20 @@ Fix: add an `Idempotency-Key` header to POST /orders; the gateway stores (key �
 (Redis or Postgres) and returns the cached response on duplicate keys without re-publishing.
 
 **Planned milestone**: M3 / authentication and rate limiting.
+
+---
+
+## TD-6 — Tests E2E multi-services manquants
+
+**Location**: tests — couverture actuelle en deux moitiés disjointes :
+- `OrderLifecycleTest` (gateway) : HTTP → Kafka
+- `MatchingEngineTest` (engine) : Kafka → moteur
+
+Les deux se rejoignent par confiance sur un offset partagé, pas par un test qui traverse
+les deux services en même temps.
+
+Fix : quand l'infra de test multi-services existe (Testcontainers Compose ou équivalent),
+écrire un test qui démarre gateway + engine ensemble, poste un ordre via HTTP, observe
+le trade ou l'annulation dans la réponse WebSocket ou le topic trades.
+
+**Planned milestone**: M5 ou quand la complexité inter-services le justifie.
