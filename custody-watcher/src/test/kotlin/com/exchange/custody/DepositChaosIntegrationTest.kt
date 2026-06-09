@@ -157,43 +157,40 @@ class DepositChaosIntegrationTest {
         }
 
         /**
-         * Copies MockToken.sol into the Anvil container, compiles and deploys it via
-         * `forge create`. Address is recovered from the Anvil transaction receipt via
-         * web3j — no parsing of forge's stdout format (which varies across versions).
+         * Copies MockToken.sol into the Anvil container, deploys it via `forge create`,
+         * and retrieves the deployed address via `cast` — all inside the container.
          *
-         * Root-owned paths in the foundry image are redirected to /tmp:
-         *   FOUNDRY_CACHE_PATH — overrides /cache
-         *   --out /tmp/forge-out — overrides /out
+         * Using cast avoids routing a web3j call from the host through the mapped port
+         * immediately after an execInContainer (which can hit OkHttp stale-connection issues).
+         * Root-owned paths /cache and /out are redirected to /tmp.
          */
         private fun deployMockToken(): String {
             anvil.copyFileToContainer(
                 MountableFile.forClasspathResource("contracts/MockToken.sol"),
                 "/tmp/MockToken.sol"
             )
+            // Deploy, then extract the contract address from the tx receipt via cast.
+            // cast receipt <txHash> --field contractAddress outputs just the address.
             val result = anvil.execInContainer(
                 "sh", "-c",
                 "FOUNDRY_CACHE_PATH=/tmp/foundry-cache forge create /tmp/MockToken.sol:MockToken" +
                 " --rpc-url http://127.0.0.1:8545" +
                 " --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" +
-                " --legacy --out /tmp/forge-out 2>&1"
+                " --legacy --out /tmp/forge-out 2>&1 &&" +
+                // Extract the first tx hash from the latest block and get its contractAddress
+                " TX=\$(cast block latest --field transactions --rpc-url http://127.0.0.1:8545" +
+                "   | tr -d '[] \"') &&" +
+                " cast receipt \$TX --field contractAddress --rpc-url http://127.0.0.1:8545"
             )
             check(result.exitCode == 0) {
-                "forge create failed (exit ${result.exitCode}):\n${result.stdout}"
+                "forge create+receipt failed (exit ${result.exitCode}):\n${result.stdout}"
             }
-
-            // Retrieve the deployed contract address from the transaction receipt.
-            // Avoids parsing forge's stdout (format changed in newer foundry versions).
-            // Anvil mines instantly, so the deployment tx is in the latest block.
-            val block = web3j.ethGetBlockByNumber(
-                org.web3j.protocol.core.DefaultBlockParameterName.LATEST, false
-            ).send()
-            for (txResult in block.block.transactions) {
-                val txHash = txResult.get() as String
-                val receipt = web3j.ethGetTransactionReceipt(txHash).send()
-                    .transactionReceipt.orElse(null) ?: continue
-                if (receipt.contractAddress != null) return receipt.contractAddress
-            }
-            error("No contract creation transaction found in latest Anvil block")
+            // The last line of stdout is the contractAddress output by `cast receipt`
+            val address = result.stdout.lines()
+                .map { it.trim() }
+                .lastOrNull { it.matches(Regex("0x[0-9a-fA-F]{40}")) }
+                ?: error("Could not extract contract address from output:\n${result.stdout}")
+            return address
         }
 
         private fun createSchema() {
