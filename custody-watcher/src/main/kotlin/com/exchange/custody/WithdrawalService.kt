@@ -91,11 +91,13 @@ class WithdrawalService(
      * there is no reference to signer in this method.
      */
     fun confirmBroadcast() {
-        val rows = jdbc.queryForList("SELECT id, tb_pending_id FROM withdrawals WHERE state = 'BROADCAST'")
+        val rows = jdbc.queryForList("SELECT id, uid, currency, tb_pending_id FROM withdrawals WHERE state = 'BROADCAST'")
         for (row in rows) {
             val id          = row["id"] as Long
+            val uid         = row["uid"] as Long
+            val currency    = row["currency"] as Int
             val tbPendingId = row["tb_pending_id"] as Long
-            settlement.postPendingWithdrawal(tbPendingId)
+            settlement.postPendingWithdrawal(tbPendingId, uid, currency)
             jdbc.update(
                 "UPDATE withdrawals SET state = 'CONFIRMED', updated_at = NOW() WHERE id = ? AND state = 'BROADCAST'",
                 id
@@ -110,11 +112,11 @@ class WithdrawalService(
      * or manual cancellation). Funds are fully restored to the user's available balance.
      */
     fun voidWithdrawal(withdrawalId: Long) {
-        val tbPendingId = jdbc.queryForObject(
-            "SELECT tb_pending_id FROM withdrawals WHERE id = ?",
-            Long::class.java, withdrawalId
-        )
-        settlement.voidPendingWithdrawal(tbPendingId)
+        val row = jdbc.queryForMap("SELECT uid, currency, tb_pending_id FROM withdrawals WHERE id = ?", withdrawalId)
+        val uid         = row["uid"] as Long
+        val currency    = row["currency"] as Int
+        val tbPendingId = row["tb_pending_id"] as Long
+        settlement.voidPendingWithdrawal(tbPendingId, uid, currency)
         jdbc.update(
             "UPDATE withdrawals SET state = 'VOID', updated_at = NOW() WHERE id = ? AND state = 'LOCKED'",
             withdrawalId

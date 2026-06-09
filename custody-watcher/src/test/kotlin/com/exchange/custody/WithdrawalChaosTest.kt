@@ -188,18 +188,26 @@ class WithdrawalChaosTest {
     // ─────────────────────────────────────────────────────────────────────────
     @Test
     @Order(4)
-    fun `W4 - confirmBroadcast finalizes TB debit — zero-sum conservation holds`() {
+    fun `W4 - confirmBroadcast finalizes TB debit — exact amount + zero-sum conservation`() {
+        // Capture external balance before confirmation to assert the exact delta
+        val externalBefore = settlement.getBalance(AccountIds.SYSTEM_EXTERNAL_USER, CURRENCY)
+
         service.confirmBroadcast()
 
         assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 1", String::class.java))
             .isEqualTo("CONFIRMED")
 
-        // Conservation: user lost AMOUNT, external account gained AMOUNT, net = 0
-        val userBalance     = settlement.getBalance(UID, CURRENCY)
-        val externalBalance = settlement.getBalance(AccountIds.SYSTEM_EXTERNAL_USER, CURRENCY)
-        assertThat(userBalance).`as`("user balance after confirmed withdrawal").isEqualTo(0L)
-        assertThat(userBalance + externalBalance)
-            .`as`("zero-sum: total across user + external must be 0").isEqualTo(0L)
+        val userBalance    = settlement.getBalance(UID, CURRENCY)
+        val externalAfter  = settlement.getBalance(AccountIds.SYSTEM_EXTERNAL_USER, CURRENCY)
+
+        // Exact amount: user lost AMOUNT (was AMOUNT, now 0)
+        assertThat(userBalance).`as`("user balance after confirmed withdrawal of $AMOUNT").isEqualTo(0L)
+        // Exact amount: external gained AMOUNT (not 400, not 600 — exactly AMOUNT)
+        assertThat(externalAfter - externalBefore)
+            .`as`("external account gained exactly $AMOUNT — correct amount moved").isEqualTo(AMOUNT)
+        // Conservation: zero-sum across all accounts
+        assertThat(userBalance + externalAfter)
+            .`as`("zero-sum conservation: user + external = 0").isEqualTo(0L)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

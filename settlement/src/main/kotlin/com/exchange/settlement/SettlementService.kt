@@ -175,21 +175,27 @@ class SettlementService(private val tb: Client) {
      * Finalise a pending withdrawal: debits_pending → debits_posted on the user account.
      * The resolving transfer ID is derived as pendingId or 1L (bit 0 distinguishes it from
      * the pending transfer, whose ID always has bit 0 clear by construction).
+     *
+     * TigerBeetle 0.16.x requires debit/credit accounts and ledger to be set explicitly on
+     * POST_PENDING_TRANSFER — zero is not treated as "inherit from pending transfer".
      * Idempotent: Exists is silently ignored.
      */
-    fun postPendingWithdrawal(pendingId: Long) {
+    fun postPendingWithdrawal(pendingId: Long, userId: Long, ledgerId: Int) {
         val batch = TransferBatch(1)
         batch.add()
         batch.setId(pendingId or 1L)
         batch.setPendingId(pendingId)
+        batch.setDebitAccountId(AccountIds.available(userId, ledgerId))
+        batch.setCreditAccountId(AccountIds.external(ledgerId))
+        batch.setLedger(ledgerId)
+        batch.setCode(200)
         batch.setFlags(TransferFlags.POST_PENDING_TRANSFER)
-        // debit_account_id, credit_account_id, ledger, code, amount = 0 → inherited from pending transfer
         val errors = tb.createTransfers(batch)
         if (errors.length > 0) {
             while (errors.next()) {
                 val result = errors.getResult()
                 if (result != CreateTransferResult.Exists) {
-                    throw IllegalStateException("postPendingWithdrawal failed pendingId=$pendingId resolvingId=${pendingId or 1L}: $result")
+                    throw IllegalStateException("postPendingWithdrawal failed pendingId=$pendingId: $result")
                 }
             }
         }
@@ -199,20 +205,25 @@ class SettlementService(private val tb: Client) {
      * Reverse a pending withdrawal: release the locked funds back to available.
      * Uses the same resolving ID formula as postPendingWithdrawal — post and void are
      * mutually exclusive so they share the ID slot.
+     * TigerBeetle 0.16.x requires explicit accounts on VOID_PENDING_TRANSFER too.
      * Idempotent: Exists is silently ignored.
      */
-    fun voidPendingWithdrawal(pendingId: Long) {
+    fun voidPendingWithdrawal(pendingId: Long, userId: Long, ledgerId: Int) {
         val batch = TransferBatch(1)
         batch.add()
         batch.setId(pendingId or 1L)
         batch.setPendingId(pendingId)
+        batch.setDebitAccountId(AccountIds.available(userId, ledgerId))
+        batch.setCreditAccountId(AccountIds.external(ledgerId))
+        batch.setLedger(ledgerId)
+        batch.setCode(200)
         batch.setFlags(TransferFlags.VOID_PENDING_TRANSFER)
         val errors = tb.createTransfers(batch)
         if (errors.length > 0) {
             while (errors.next()) {
                 val result = errors.getResult()
                 if (result != CreateTransferResult.Exists) {
-                    throw IllegalStateException("voidPendingWithdrawal failed pendingId=$pendingId resolvingId=${pendingId or 1L}: $result")
+                    throw IllegalStateException("voidPendingWithdrawal failed pendingId=$pendingId: $result")
                 }
             }
         }
