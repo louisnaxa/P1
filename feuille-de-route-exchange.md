@@ -8,6 +8,12 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 
 ---
 
+## Virage produit
+
+Le noyau exchange (M0–M4) est la fondation d'une plateforme de tokenisation immobilière, pas le produit final. Phase produit en cours de cadrage, ordre de construction : statut des détenteurs → gestion par bien → contrôle au transfert → distribution loyers / seuil 100 %. Le détail sera inscrit brique par brique à mesure qu'elles sont cadrées et prouvées. M4 signature/diffusion MPC et M5 (front React) sont repoussés APRÈS le cœur tokenisation — décision : construire d'abord le levier démontrable. Niveau de rigueur : statut + contrôle au transfert = money-path (rigueur maximale, tests de refus) ; le reste = niveau preuve de concept.
+
+---
+
 ## Le projet en une phrase
 
 Une plateforme d'échange centralisée où les utilisateurs tradent des actifs que je crée moi-même (ils n'existent que dans ma base, pas sur une blockchain). La seule valeur réelle qui entre et sort est du stablecoin (USDT/USDC), détenu en custody.
