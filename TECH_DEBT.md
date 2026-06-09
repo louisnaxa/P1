@@ -152,3 +152,23 @@ accumulation lente. Fix : Guava `Cache` avec TTL d'éviction (ex. 1h d'inactivit
 (résout les deux problèmes à la fois).
 
 **Planned milestone**: avant scale horizontal du gateway (Redis rate limiting remplace les deux).
+
+---
+
+## TD-11 — Single hot wallet MPC, pas de séparation hot/cold
+
+**Location**: `AccountIds.external(ledgerId)` — un seul compte système externe par currency/ledger.
+
+M4 opère avec un seul wallet MPC qui reçoit tous les dépôts on-chain. Il n'existe pas de compte
+TigerBeetle `external-hot` / `external-cold` — `SYSTEM_EXTERNAL_USER = 0L` est unique par ledger.
+
+Conséquences en production multi-instance :
+- Tout le collatéral en stablecoin réside dans un seul wallet on-chain (hot wallet).
+- Exposition maximale en cas de clé MPC compromise.
+- La règle de sécurité standard (>80 % des fonds en cold storage) n'est pas respectée.
+
+Fix : introduire deux adresses on-chain (hot + cold), une logique de sweep automatique
+(hot→cold quand hot > seuil), et deux comptes TigerBeetle distincts ou un seul compte
+with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
+
+**Planned milestone**: M6 / infrastructure custody avancée.

@@ -16,7 +16,11 @@ data class EngineCommand(
     val baseCurrency: Int = 0,
     val quoteCurrency: Int = 0,
     val baseScaleK: Long = 1,
-    val quoteScaleK: Long = 1
+    val quoteScaleK: Long = 1,
+    // On-chain deposit: "$txHash:$logIndex". When non-empty, AdjustBalanceConsumer derives
+    // the TigerBeetle transferId from SHA-256(onChainRef) instead of the Kafka offset.
+    // Empty string means admin credit — offset-based transferId path is unchanged.
+    val onChainRef: String = ""
 ) {
     companion object {
         const val ADD_SYMBOL = "ADD_SYMBOL"

@@ -1,6 +1,7 @@
 package com.exchange.settlement
 
 import com.exchange.common.EngineCommand
+import java.security.MessageDigest
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.admin.OffsetSpec
@@ -113,11 +114,23 @@ class AdjustBalanceConsumer(
             settlementService.ensureSystemAccounts(cmd.currency)
             settlementService.ensureAccount(cmd.uid, cmd.currency)
 
-            // transferId: (partition << 32) | (offset + 1)
-            //   - offset + 1 avoids TigerBeetle's reserved ID 0
-            //   - partition-scoped so multi-partition topics never collide
-            //   - values stay well below trade transferIds (tradeId << 4)
-            val transferId = (record.partition().toLong() shl 32) or (record.offset() + 1)
+            // Two transferId paths:
+            //   admin credit (onChainRef empty): (partition << 32) | (offset + 1)
+            //     - deterministic from the Kafka log position
+            //   on-chain deposit (onChainRef = "$txHash:$logIndex"): SHA-256 lower 8 bytes
+            //     - deterministic from the on-chain event; survives Kafka re-delivery at
+            //       different offsets (reorg, watcher restart) without double-credit
+            val transferId = if (cmd.onChainRef.isEmpty()) {
+                (record.partition().toLong() shl 32) or (record.offset() + 1)
+            } else {
+                val sha = MessageDigest.getInstance("SHA-256").digest(cmd.onChainRef.toByteArray())
+                // Take the first 8 bytes as big-endian Long. Bit 63 is set to 1 to keep
+                // on-chain transferIds in a namespace disjoint from sequential admin IDs.
+                (sha[0].toLong() and 0xff shl 56) or (sha[1].toLong() and 0xff shl 48) or
+                (sha[2].toLong() and 0xff shl 40) or (sha[3].toLong() and 0xff shl 32) or
+                (sha[4].toLong() and 0xff shl 24) or (sha[5].toLong() and 0xff shl 16) or
+                (sha[6].toLong() and 0xff shl  8) or (sha[7].toLong() and 0xff) or Long.MIN_VALUE
+            }
             settlementService.deposit(cmd.uid, cmd.currency, cmd.amount, transferId)
 
             // Update expected balance BEFORE emitting the caught-up signal below

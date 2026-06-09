@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: custody-watcher
+  datasource:
+    url: jdbc:postgresql://localhost:5432/exchange
+    username: exchange
+    password: exchange
+  kafka:
+    bootstrap-servers: localhost:9092
+
+custody:
+  rpc-url: http://localhost:8545
+  token-address: "0x0000000000000000000000000000000000000000"  # set at deploy
+  commands-topic: commands
+  confirmations: 6
+  poll-interval-ms: 5000
+
+logging:
+  level:
+    com.exchange: DEBUG
