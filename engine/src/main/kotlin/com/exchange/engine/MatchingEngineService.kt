@@ -12,6 +12,7 @@ import exchange.core2.core.common.OrderType
 import exchange.core2.core.common.SymbolType
 import exchange.core2.core.common.api.ApiAddUser
 import exchange.core2.core.common.api.ApiAdjustUserBalance
+import exchange.core2.core.common.api.ApiCancelOrder
 import exchange.core2.core.common.api.ApiPlaceOrder
 import exchange.core2.core.common.api.binary.BatchAddSymbolsCommand
 import exchange.core2.core.common.cmd.CommandResultCode
@@ -94,7 +95,8 @@ class MatchingEngineService(
         pendingRawTrades.clear()
 
         val result = when (cmd.type) {
-            EngineCommand.PLACE_ORDER -> submitPlaceOrder(cmd)
+            EngineCommand.PLACE_ORDER -> submitPlaceOrder(cmd, offset)
+            EngineCommand.CANCEL_ORDER -> submitCancelOrder(cmd)
             EngineCommand.ADD_SYMBOL -> submitAddSymbol(cmd)
             EngineCommand.ADD_USER -> submitAddUser(cmd)
             EngineCommand.ADJUST_BALANCE -> submitAdjustBalance(cmd)
@@ -151,7 +153,9 @@ class MatchingEngineService(
 
     // -- Command dispatchers --
 
-    private fun submitPlaceOrder(cmd: EngineCommand): CommandResultCode {
+    // orderId = Kafka offset of this command — the single source of order identity (Option A).
+    // cmd.orderId is ignored here; the gateway does not include it in PLACE_ORDER commands.
+    private fun submitPlaceOrder(cmd: EngineCommand, offset: Long): CommandResultCode {
         val action = when (cmd.side) {
             OrderSide.BID -> OrderAction.BID
             OrderSide.ASK -> OrderAction.ASK
@@ -159,7 +163,7 @@ class MatchingEngineService(
         }
         val order = ApiPlaceOrder.builder()
             .uid(cmd.uid)
-            .orderId(cmd.orderId)
+            .orderId(offset)
             .price(cmd.price)
             .reservePrice(if (cmd.side == OrderSide.BID) cmd.price else 0L)
             .size(cmd.size)
@@ -169,6 +173,9 @@ class MatchingEngineService(
             .build()
         return api.submitCommandAsync(order).get()
     }
+
+    private fun submitCancelOrder(cmd: EngineCommand): CommandResultCode =
+        api.submitCommandAsync(ApiCancelOrder(cmd.orderId, cmd.uid, cmd.symbolId)).get()
 
     private fun submitAddSymbol(cmd: EngineCommand): CommandResultCode {
         val spec = CoreSymbolSpecification.builder()

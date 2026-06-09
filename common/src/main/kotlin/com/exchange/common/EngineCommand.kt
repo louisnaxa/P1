@@ -23,6 +23,7 @@ data class EngineCommand(
         const val ADD_USER = "ADD_USER"
         const val ADJUST_BALANCE = "ADJUST_BALANCE"
         const val PLACE_ORDER = "PLACE_ORDER"
+        const val CANCEL_ORDER = "CANCEL_ORDER"
 
         fun addSymbol(symbolId: Int, baseCurrency: Int, quoteCurrency: Int, baseScaleK: Long = 1, quoteScaleK: Long = 1) =
             EngineCommand(type = ADD_SYMBOL, symbolId = symbolId, baseCurrency = baseCurrency, quoteCurrency = quoteCurrency, baseScaleK = baseScaleK, quoteScaleK = quoteScaleK)
@@ -35,5 +36,8 @@ data class EngineCommand(
 
         fun placeOrder(symbolId: Int, uid: Long, orderId: Long, price: Long, size: Long, side: OrderSide) =
             EngineCommand(type = PLACE_ORDER, symbolId = symbolId, uid = uid, orderId = orderId, price = price, size = size, side = side)
+
+        fun cancelOrder(symbolId: Int, uid: Long, orderId: Long) =
+            EngineCommand(type = CANCEL_ORDER, symbolId = symbolId, uid = uid, orderId = orderId)
     }
 }

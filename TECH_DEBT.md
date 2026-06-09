@@ -66,3 +66,18 @@ batch.setFlags(TransferFlags.LINKED)   // on leg 0 only; leg 1 keeps flags = 0
 ```
 
 **Planned milestone**: M2 / locked accounts.
+
+---
+
+## TD-5 — No idempotency on incoming HTTP requests (POST /orders)
+
+**Location**: `gateway/src/main/kotlin/com/exchange/gateway/OrderController.kt`
+
+With Option A (orderId = Kafka offset), the client does not know its orderId before the POST is
+confirmed.  A network retry sends a second PLACE_ORDER command that lands at a different offset
+and becomes a distinct order — the engine sees two separate orders.
+
+Fix: add an `Idempotency-Key` header to POST /orders; the gateway stores (key → orderId) durably
+(Redis or Postgres) and returns the cached response on duplicate keys without re-publishing.
+
+**Planned milestone**: M3 / authentication and rate limiting.
