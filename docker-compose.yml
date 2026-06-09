@@ -21,9 +21,17 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- Relational DB + time-series (TimescaleDB = Postgres + hypertable extension) ---
-  # On first start, init scripts in infra/timescale-init/ run automatically.
-  # Switching from plain postgres:16? Run: docker compose down -v && docker compose up
+  # --- Relational DB + time-series ---
+  # Single shared Postgres instance (TimescaleDB = PostgreSQL + hypertable extension).
+  # CONSCIOUS CHOICE: one service hosts both business data (users, orders) and market
+  # data (candles hypertable). Acceptable for M2; revisit at M5 if read/write patterns
+  # diverge enough to justify separate instances.
+  #
+  # Init scripts in infra/timescale-init/ run ONLY on first volume initialisation.
+  # ⚠ DEV RESET ONLY — NEVER ON AN ENVIRONMENT WITH REAL DATA:
+  #   docker compose down -v   ← destroys pgdata (accounts, orders) AND tbdata (TigerBeetle ledger)
+  #   docker compose up        ← re-initialises from scratch
+  # On a live system this command destroys user funds. Do not normalise it.
   postgres:
     image: timescale/timescaledb:2.14-pg16
     ports:
