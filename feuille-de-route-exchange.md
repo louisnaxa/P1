@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 9 juin 2026 :** M0, M1 et **M2 franchis et prouvés** (CI verte, tests chaos + E2E réels). Jalon courant : **M3**. M4 en cours : dépôt et retrait (verrou + machine d'état + nonce) prouvés en CI ; signature/diffusion MPC réelle + confirmations on-chain + résolution trou de nonce restent à valider en environnement MPC.
+> **État au 9 juin 2026 :** M0, M1, M2 et **M3 franchis et prouvés** (CI verte). Jalon courant : **M4**. Dépôt + retrait (verrou/état/nonce) prouvés en CI ; signature/diffusion MPC réelle + confirmations on-chain + résolution trou de nonce restent à valider en environnement MPC (TD-13).
 
 ---
 
@@ -76,11 +76,11 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 - [x] Comptes verrouillés + flag `LINKED` sur les deux jambes (clôt TD-4)
 - [x] Session de trading multi-comptes en ligne de commande, sans dérive de solde
 
-### M3 — Sécurisé
+### M3 — Sécurisé ✅ FRANCHI ET PROUVÉ
 
-- [ ] Keycloak branché, clés d'API émises
-- [ ] Requêtes non authentifiées rejetées
-- [ ] Rate limiting par utilisateur
+- [x] Keycloak branché comme resource server OAuth2 : `jwk-set-uri` pointé sur le realm Keycloak, `JwtAuthenticationConverter` lit `realm_access.roles` — `SecurityFilterChain` : market data GET public, `/orders` et `DELETE /orders/**` exigent un JWT valide, `/admin/credit` exige `ROLE_exchange-admin` (403 avec token user, pas 401)
+- [x] Requêtes non authentifiées rejetées : uid non falsifiable — `UserService.resolveUid()` lit `keycloak_sub → internal_uid` dans la table `users` ; sub inconnu → 403 immédiat, jamais de fallback ; le body de la requête n'a pas de champ uid (injection côté client structurellement impossible) — 6 tests dans `SecurityTest` : 401 sans token (3 endpoints), 403 token sans rôle admin, 403 sub inconnu, market data public, test Alice (uid vient du token)
+- [x] Rate limiting par utilisateur : `OrderRateLimitFilter` (Guava `RateLimiter`, après `AuthorizationFilter`, 10 req/s par défaut) — TD-10 ouvert pour le distribué Redis avant scale horizontal
 
 ### M4 — Custody réelle (2e zone à haut risque)
 
@@ -123,14 +123,18 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 
 ---
 
-## Jalon courant : M2 — tâches concrètes
+## Jalon courant : M4 — Custody réelle
 
-- [ ] `gateway` : API REST placer/annuler qui écrit dans le topic `commands` (jamais d'appel direct au moteur)
-- [ ] WebSocket : diffusion du carnet (L2), des trades et du ticker
-- [ ] Agrégation des bougies (OHLCV) dans TimescaleDB
-- [x] Endpoint admin de crédit (utilitaire, **pas** la logique de dépôt M4)
-- [x] Comptes verrouillés + flag `LINKED` (clôt TD-4 ; chaos 4 réécrit et vert en CI)
-- [ ] Test de bout en bout : session multi-comptes en ligne de commande, réconciliation sans écart
+Ce qui est prouvé en CI :
+- [x] Dépôt : idempotence layer-1 (Postgres UNIQUE `tx_hash+log_index`) + layer-2 (SHA-256 transferId TB) — `AdjustBalanceIdempotencyTest` D1+D2
+- [x] Retrait verrou + machine d'état (LOCKED→BROADCAST→CONFIRMED|VOID) — `WithdrawalChaosTest` W1–W7
+- [x] Retrait nonce : réservation durable avant sign(), ordre ASC obligatoire, reprise crash-3b — W8–N9
+
+Ce qui reste (hors CI — intégration MPC + audit, voir TD-13) :
+- [ ] Signature/diffusion MPC réelle (`WithdrawalSigner` production, `raw_tx` on-chain)
+- [ ] Confirmations on-chain (watcher N blocs → BROADCAST→CONFIRMED piloté par la chaîne)
+- [ ] Résolution trou de nonce (transaction d'annulation si nonce bloqué)
+- [ ] Gestion des clés revue par quelqu'un de compétent
 
 Réflexe de supervision sur chaque fonction touchant un solde : « contre quoi ça tourne, qu'est-ce que ça prouve ? ».
 
