@@ -10,6 +10,7 @@ import org.testcontainers.containers.BindMode
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import java.io.File
+import java.net.InetAddress
 import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -93,9 +94,18 @@ class TigerBeetleContainer : AutoCloseable {
         docker.removeContainerCmd(containerId).exec()
     }
 
-    /** The address string to pass to the TigerBeetle Java client. */
+    /**
+     * The address string to pass to the TigerBeetle Java client.
+     *
+     * TigerBeetle 0.16.x native client requires a bare IPv4 address — it does
+     * not resolve hostnames.  Testcontainers may return "localhost" for the
+     * container host, so we resolve it to a numeric IPv4 address here.
+     */
     val address: String
-        get() = "${serverContainer.host}:${serverContainer.getMappedPort(TB_PORT)}"
+        get() {
+            val ip = InetAddress.getByName(serverContainer.host).hostAddress
+            return "$ip:${serverContainer.getMappedPort(TB_PORT)}"
+        }
 
     override fun close() {
         runCatching { serverContainer.stop() }
