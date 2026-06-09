@@ -90,7 +90,7 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 - [ ] Retrait — signature/diffusion MPC réelle : `WithdrawalSigner` production, raw_tx on-chain, watcher confirmations (BROADCAST→CONFIRMED on-chain) — à valider en intégration MPC, hors CI
 - [ ] Retrait — résolution trou de nonce (transaction d'annulation si nonce bloqué) — MPC sub-lot suivant
 - [ ] Gestion des clés revue par quelqu'un de compétent
-- [ ] Un événement rejoué ne crédite jamais deux fois ✓ (prouvé en layer-2 idempotency)
+- [x] Un événement rejoué ne crédite jamais deux fois — prouvé en layer-2 idempotency (AdjustBalanceIdempotencyTest D1+D2)
 
 ### M5 — Utilisable
 
