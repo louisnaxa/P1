@@ -22,6 +22,11 @@ spring:
     listener:
       ack-mode: manual_immediate
 
+  datasource:
+    url: jdbc:postgresql://localhost:5432/exchange
+    username: exchange
+    password: exchange
+
 logging:
   level:
     com.exchange: DEBUG

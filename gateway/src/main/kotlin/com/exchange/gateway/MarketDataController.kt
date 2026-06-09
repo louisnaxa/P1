@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping
 class MarketDataController(
     private val orderBookConsumer: OrderBookConsumer,
-    private val tradeStreamConsumer: TradeStreamConsumer
+    private val tradeStreamConsumer: TradeStreamConsumer,
+    private val candleAggregator: CandleAggregator
 ) {
 
     @GetMapping("/orderbook/{symbolId}")
@@ -26,4 +27,11 @@ class MarketDataController(
         tradeStreamConsumer.latestTicker(symbolId)
             ?.let { ResponseEntity.ok(it) }
             ?: ResponseEntity.notFound().build()
+
+    @GetMapping("/candles/{symbolId}")
+    fun candles(
+        @PathVariable symbolId: Int,
+        @RequestParam(defaultValue = "1m") resolution: String,
+        @RequestParam(defaultValue = "200") limit: Int
+    ): List<CandleDto> = candleAggregator.getCandles(symbolId, resolution, limit.coerceAtMost(1000))
 }

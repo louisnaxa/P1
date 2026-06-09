@@ -21,9 +21,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- Relational DB ---
+  # --- Relational DB + time-series (TimescaleDB = Postgres + hypertable extension) ---
+  # On first start, init scripts in infra/timescale-init/ run automatically.
+  # Switching from plain postgres:16? Run: docker compose down -v && docker compose up
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:2.14-pg16
     ports:
       - "5432:5432"
     environment:
@@ -32,6 +34,7 @@ services:
       POSTGRES_DB: exchange
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./infra/timescale-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U exchange"]
       interval: 5s
