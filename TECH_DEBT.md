@@ -175,20 +175,11 @@ with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
 
 ---
 
-## TD-12 — Test isolé layer-2 manquant : même commande à deux offsets Kafka différents
+## TD-12 — ~~Test isolé layer-2 manquant : même commande à deux offsets Kafka différents~~ ✓ CLOSED
 
-**Location**: `AdjustBalanceConsumer` — le chemin SHA-256 n'est couvert que de manière
-indirecte par `DepositChaosIntegrationTest` (le watcher ne re-publie pas → TigerBeetle
-n'est pas appelé deux fois).
+**Fixed**: `settlement:AdjustBalanceIdempotencyTest` — D1 + D2 prouvent la protection contre
+le double-crédit sans outillage blockchain :
+1. Même `onChainRef`, offset Kafka 5 → TigerBeetle crédité une fois (500).
+2. Même `onChainRef`, offset Kafka 17 → SHA-256 transferId identique → TigerBeetle no-op → solde inchangé (500).
 
-**Cas non couvert** : si le watcher *échouait* à dédupliquer (layer 1 percé), est-ce que
-TigerBeetle absorberait quand même le doublon grâce au SHA-256 transferId (layer 2) ?
-Preuve attendue :
-1. Publier deux `ADJUST_BALANCE` avec le même `onChainRef` mais à des offsets Kafka distincts.
-2. Appeler `AdjustBalanceConsumer.onCommand()` pour chaque.
-3. Vérifier que `SettlementService.getBalance()` = montant d'un seul dépôt.
-
-Ce test confirme que les deux couches sont vraiment indépendantes — ni l'une ni l'autre
-seule n'est un point de défaillance unique.
-
-**Planned milestone**: M4 follow-up ou lors de la prochaine revue de couverture settlement.
+Layer 1 (Postgres UNIQUE) et Layer 2 (SHA-256 transferId) sont prouvés indépendants.
