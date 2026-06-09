@@ -72,8 +72,8 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 
 - [ ] API REST (placer / annuler) + WebSocket (carnet, trades, ticker)
 - [ ] Bougies (candles) enregistrées dans TimescaleDB
-- [ ] Endpoint admin qui crédite un solde (dépôts encore simulés)
-- [ ] Comptes verrouillés + flag `LINKED` sur les deux jambes (clôt TD-4)
+- [x] Endpoint admin qui crédite un solde (dépôts encore simulés)
+- [x] Comptes verrouillés + flag `LINKED` sur les deux jambes (clôt TD-4)
 - [ ] Session de trading multi-comptes en ligne de commande, sans dérive de solde
 
 ### M3 — Sécurisé
@@ -125,8 +125,8 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 - [ ] `gateway` : API REST placer/annuler qui écrit dans le topic `commands` (jamais d'appel direct au moteur)
 - [ ] WebSocket : diffusion du carnet (L2), des trades et du ticker
 - [ ] Agrégation des bougies (OHLCV) dans TimescaleDB
-- [ ] Endpoint admin de crédit (utilitaire, **pas** la logique de dépôt M4)
-- [ ] Comptes verrouillés + flag `LINKED` (clôt TD-4 ; réactiver alors le test chaos 4)
+- [x] Endpoint admin de crédit (utilitaire, **pas** la logique de dépôt M4)
+- [x] Comptes verrouillés + flag `LINKED` (clôt TD-4 ; chaos 4 réécrit et vert en CI)
 - [ ] Test de bout en bout : session multi-comptes en ligne de commande, réconciliation sans écart
 
 Réflexe de supervision sur chaque fonction touchant un solde : « contre quoi ça tourne, qu'est-ce que ça prouve ? ».

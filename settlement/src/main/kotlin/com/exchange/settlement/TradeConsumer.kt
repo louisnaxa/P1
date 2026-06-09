@@ -93,9 +93,11 @@ class TradeConsumer(
         val quoteLedger = 11
 
         // Ensure all four participant accounts exist before settling (gap-2 prevention).
-        // Called before settleTrade — if any creation fails (TigerBeetle unavailable),
-        // the exception propagates here, ack is never called, and Spring Kafka retries
-        // the record. Idempotent: TigerBeetle silently returns EXISTS for known accounts.
+        // ORDER IS A CORRECTNESS GUARANTEE, NOT A CONVENIENCE: all ensureAccount calls
+        // must complete before settleTrade. If any throws (TigerBeetle unavailable),
+        // the exception propagates, ack is never called, and Spring Kafka retries the
+        // record. Reversing this order would allow settleTrade to fail on a missing
+        // account with no safe retry path (TD-9). Idempotent: EXISTS is silently ignored.
         settlementService.ensureAccount(trade.takerUserId, baseLedger)
         settlementService.ensureAccount(trade.takerUserId, quoteLedger)
         settlementService.ensureAccount(trade.makerUserId, baseLedger)
