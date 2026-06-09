@@ -89,10 +89,22 @@ class TradeConsumer(
         log.info("Received trade {} symbol={} offset={}", trade.tradeId, trade.symbolId, record.offset())
 
         // TODO: symbol → (baseLedger, quoteLedger) mapping will be managed in M2
-        settlementService.settleTrade(trade, baseLedger = 10, quoteLedger = 11)
+        val baseLedger = 10
+        val quoteLedger = 11
+
+        // Ensure all four participant accounts exist before settling (gap-2 prevention).
+        // Called before settleTrade — if any creation fails (TigerBeetle unavailable),
+        // the exception propagates here, ack is never called, and Spring Kafka retries
+        // the record. Idempotent: TigerBeetle silently returns EXISTS for known accounts.
+        settlementService.ensureAccount(trade.takerUserId, baseLedger)
+        settlementService.ensureAccount(trade.takerUserId, quoteLedger)
+        settlementService.ensureAccount(trade.makerUserId, baseLedger)
+        settlementService.ensureAccount(trade.makerUserId, quoteLedger)
+
+        settlementService.settleTrade(trade, baseLedger, quoteLedger)
 
         // Update expected balance BEFORE emitting the caught-up signal below
-        reconciliation.recordTrade(trade, baseLedger = 10, quoteLedger = 11)
+        reconciliation.recordTrade(trade, baseLedger, quoteLedger)
 
         // Signal AFTER settlement and expected-balance update, never before
         val tp = TopicPartition(record.topic(), record.partition())

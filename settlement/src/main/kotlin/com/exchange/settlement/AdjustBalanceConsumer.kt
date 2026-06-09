@@ -100,6 +100,13 @@ class AdjustBalanceConsumer(
     fun onCommand(record: ConsumerRecord<String, EngineCommand>, ack: Acknowledgment) {
         val cmd = record.value()
 
+        // When a new trading pair is activated, create external+fees accounts for
+        // both ledgers immediately so they are ready before the first trade settles.
+        if (cmd.type == EngineCommand.ADD_SYMBOL) {
+            settlementService.ensureSystemAccounts(cmd.baseCurrency)
+            settlementService.ensureSystemAccounts(cmd.quoteCurrency)
+        }
+
         // Only adjustBalance commands are applied to TigerBeetle; all other types
         // (addUser, addSymbol, placeOrder) are skipped for settlement purposes.
         if (cmd.type == EngineCommand.ADJUST_BALANCE) {

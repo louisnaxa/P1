@@ -89,6 +89,33 @@ le trade ou l'annulation dans la réponse WebSocket ou le topic trades.
 
 ---
 
+## TD-9 — Pas de rejeu automatique d'un batch LINKED rejeté
+
+**Location**: `SettlementService.settleTrade` — `log.error` quand errors non-EXISTS.
+
+TigerBeetle 0.16.11 consomme définitivement les transferId d'un batch LINKED rejeté
+(`CreateTransferResult.IdAlreadyFailed` au retry). Si `settleTrade` est appelé et
+qu'une jambe échoue (compte absent, contrainte TB), LINKED rollback les deux jambes
+atomiquement — aucun fonds ne bouge — mais le trade reste non réglé. Rejouer avec
+les mêmes `tradeId` → mêmes transferId → silencieusement rejeté encore.
+
+**Prévention à la source** : `TradeConsumer.onTrade` appelle `ensureAccount` pour
+les 4 comptes participants avant `settleTrade` (gap-2 prevention). Élimine le cas
+"compte absent" en trafic normal.
+
+**Exposition résiduelle** : toute autre erreur TB sur une jambe (contrainte métier,
+indisponibilité partielle) laisse le trade non réglé sans chemin de retry automatique.
+
+**Remédiation manuelle** : identifier le trade dans les logs (niveau ERROR), corriger
+la cause, ré-émettre via `POST /admin/credit` pour les montants concernés.
+
+**Fix automatisé** : nécessite un compteur de retry dans le schéma de transferId +
+un lookup TB avant retry. Reporté — le cas est rare après gap-2 prevention.
+
+**Planned milestone**: M3+ si le cas devient runtime régulier.
+
+---
+
 ## TD-7 — Test replay-gate pilote onCommand directement, pas le listener réel
 
 **Location**: `EngineReplayGateTest.EngineCommandConsumerReplayTest`

@@ -6,6 +6,7 @@ import com.tigerbeetle.AccountBatch
 import com.tigerbeetle.AccountFlags
 import com.tigerbeetle.Client
 import com.tigerbeetle.IdBatch
+import com.tigerbeetle.CreateTransferResult
 import com.tigerbeetle.TransferBatch
 import com.tigerbeetle.TransferFlags
 import org.slf4j.LoggerFactory
@@ -121,7 +122,21 @@ class SettlementService(private val tb: Client) {
 
         val errors = tb.createTransfers(batch)
         if (errors.length > 0) {
-            log.warn("Transfer errors for trade {} (may be duplicates): count={}", trade.tradeId, errors.length)
+            val errorList = buildList {
+                while (errors.next()) add(errors.getIndex() to errors.getResult())
+            }
+            if (errorList.all { (_, r) -> r == CreateTransferResult.Exists }) {
+                log.debug("Trade {} already settled — idempotent replay", trade.tradeId)
+            } else {
+                // LINKED batch rejected: no funds were moved (atomicity held), but the trade
+                // is NOT settled. Manual intervention required (see TD-9 in TECH_DEBT.md).
+                log.error(
+                    "SETTLEMENT FAILURE trade={} — LINKED batch rejected, trade NOT settled. " +
+                    "Ensure all participant accounts exist and re-emit via /admin/credit. errors={}",
+                    trade.tradeId,
+                    errorList.joinToString { (i, r) -> "leg[$i]=$r" }
+                )
+            }
         } else {
             log.info("Settled trade {}: {} base @ {} quote, buyer={} seller={}",
                 trade.tradeId, baseAmount, quoteAmount, buyerUid, sellerUid)

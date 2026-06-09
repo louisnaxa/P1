@@ -355,29 +355,31 @@ class SettlementChaosIntegrationTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Chaos 4 — LINKED flag: leg 1 failure rolls back leg 0 atomically (TD-4)
+    // Chaos 4 — LINKED atomicity + gap-2 prevention via ensureAccount
     //
-    // settleTrade submits both legs with TransferFlags.LINKED on leg 0.
-    // If leg 1 fails (e.g. a missing account), TigerBeetle rolls back leg 0
-    // in the same atomic batch — no partial state is ever committed.
+    // Two scenarios in sequence, sharing users ALICE_C4 / BOB_C4:
     //
-    // Test scenario:
-    //   1. Bob's base account is intentionally absent → leg 1 (base: Bob→Alice)
-    //      returns DEBIT_ACCOUNT_NOT_FOUND; leg 0 is rolled back atomically.
-    //      ALL balances remain unchanged.
-    //   2. Bob's base account is created and funded (operator remediation).
-    //   3. Full settleTrade replayed → both legs succeed → trade fully settled.
-    //   4. Balances == exactly one complete trade; leg 0 not double-counted.
+    //   Part A — LINKED atomicity (accounts absent, simulate missing ensureAccount):
+    //     Alice has QUOTE only, Bob has BASE only (their "receive" ledger accounts
+    //     don't exist yet).  settleTrade WITHOUT ensureAccount: leg 0 (quote)
+    //     fails on CreditAccountNotFound for Bob's QUOTE → entire LINKED chain
+    //     rejected atomically → ALL balances unchanged.
+    //
+    //   Part B — Gap-2 prevention (first-time buyer, normal trading):
+    //     TradeConsumer calls ensureAccount for all 4 participants before
+    //     settleTrade — this is what the production path does.  A NEW tradeId is
+    //     used because TB 0.16.11 consumes IDs from rejected batches (see TD-9).
+    //     Trade settles correctly; second replay with same IDs is a no-op.
     // ─────────────────────────────────────────────────────────────────────────
     @Test
-    fun `chaos 4 - LINKED flag rolls back both legs atomically when leg 1 account missing`() {
-        // Set up accounts for both users — Bob's base account intentionally omitted
-        service.ensureAccount(ALICE_C4, BASE_LEDGER)
-        service.ensureAccount(ALICE_C4, QUOTE_LEDGER)
-        service.ensureAccount(BOB_C4,   QUOTE_LEDGER)
+    fun `chaos 4 - LINKED rolls back atomically on missing account, ensureAccount prevents gap-2`() {
+        // Only the "spend" accounts exist initially — receive accounts are absent
+        service.ensureAccount(ALICE_C4, QUOTE_LEDGER)   // Alice pays QUOTE
+        service.ensureAccount(BOB_C4,   BASE_LEDGER)    // Bob delivers BASE
         service.deposit(ALICE_C4, QUOTE_LEDGER, ALICE_QUOTE, depositSeq.getAndIncrement())
-        service.deposit(ALICE_C4, BASE_LEDGER,  ALICE_BASE,  depositSeq.getAndIncrement())
-        service.deposit(BOB_C4,   QUOTE_LEDGER, BOB_QUOTE,   depositSeq.getAndIncrement())
+        service.deposit(BOB_C4,   BASE_LEDGER,  BOB_BASE,    depositSeq.getAndIncrement())
+        service.ensureSystemAccounts(BASE_LEDGER)
+        service.ensureSystemAccounts(QUOTE_LEDGER)
 
         // tradeId offset=400 — distinct from C1 (100), C2 (engine ~8), C3 (300)
         val trade = TradeEvent(
@@ -392,33 +394,50 @@ class SettlementChaosIntegrationTest {
             takerSide    = OrderSide.BID,
             timestampNs  = 0L
         )
+        val quoteAmount = trade.price * trade.quantity   // 500
 
-        // ── First call: leg 1 fails (Bob has no base account) ─────────────────
-        // LINKED on leg 0 → TigerBeetle rolls back leg 0 atomically.
-        // No transfers committed; all balances unchanged.
+        // ── Part A: LINKED atomicity ───────────────────────────────────────────
+        // Bob's QUOTE receive account is absent → leg 0 (Alice→Bob QUOTE) fails
+        // with CreditAccountNotFound.  LINKED rejects the whole chain atomically.
+        // Alice's QUOTE is NOT debited; no funds move.
         service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
 
         assertThat(service.getBalance(ALICE_C4, QUOTE_LEDGER))
-            .`as`("Alice quote: leg 0 rolled back").isEqualTo(ALICE_QUOTE)
-        assertThat(service.getBalance(BOB_C4,   QUOTE_LEDGER))
-            .`as`("Bob quote: leg 0 rolled back").isEqualTo(BOB_QUOTE)
+            .`as`("Part A: Alice QUOTE unchanged — LINKED rolled back leg 0").isEqualTo(ALICE_QUOTE)
+        assertThat(service.getBalance(BOB_C4, QUOTE_LEDGER))
+            .`as`("Part A: Bob QUOTE absent — balance 0").isEqualTo(0L)
         assertThat(service.getBalance(ALICE_C4, BASE_LEDGER))
-            .`as`("Alice base: unchanged").isEqualTo(ALICE_BASE)
-        assertThat(service.getBalance(BOB_C4,   BASE_LEDGER))
-            .`as`("Bob base account missing → balance 0").isEqualTo(0L)
+            .`as`("Part A: Alice BASE absent — balance 0").isEqualTo(0L)
+        assertThat(service.getBalance(BOB_C4, BASE_LEDGER))
+            .`as`("Part A: Bob BASE unchanged").isEqualTo(BOB_BASE)
 
-        // ── Operator remediation: create Bob's base account and fund it ────────
-        service.ensureAccount(BOB_C4, BASE_LEDGER)
-        service.deposit(BOB_C4, BASE_LEDGER, BOB_BASE, depositSeq.getAndIncrement())
+        // ── Part B: gap-2 prevention — TradeConsumer.onTrade path ─────────────
+        // ensureAccount for all 4 participants (as production code does).
+        // New tradeId: TB 0.16.11 consumes IDs of rejected batches (TD-9).
+        val trade2 = trade.copy(tradeId = (401L shl 16) or 0L)
 
-        // ── Retry: both legs succeed (transfer IDs are fresh — not previously committed) ──
-        service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
+        service.ensureAccount(ALICE_C4, BASE_LEDGER)    // creates Alice's BASE receive account
+        service.ensureAccount(ALICE_C4, QUOTE_LEDGER)   // already exists → TB EXISTS (no-op)
+        service.ensureAccount(BOB_C4,   BASE_LEDGER)    // already exists → TB EXISTS (no-op)
+        service.ensureAccount(BOB_C4,   QUOTE_LEDGER)   // creates Bob's QUOTE receive account
 
-        // Full invariant: real TigerBeetle balances == exactly one complete trade
-        assertSingleTrade(ALICE_C4, BOB_C4, price = trade.price, qty = trade.quantity)
+        service.settleTrade(trade2, BASE_LEDGER, QUOTE_LEDGER)
 
-        // A second replay is a complete no-op (both legs now exist)
-        service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
-        assertSingleTrade(ALICE_C4, BOB_C4, price = trade.price, qty = trade.quantity)
+        // All four accounts exist; trade settles correctly
+        assertThat(service.getBalance(ALICE_C4, QUOTE_LEDGER))
+            .`as`("Part B: Alice QUOTE debited").isEqualTo(ALICE_QUOTE - quoteAmount)
+        assertThat(service.getBalance(ALICE_C4, BASE_LEDGER))
+            .`as`("Part B: Alice BASE credited (was 0)").isEqualTo(trade.quantity)
+        assertThat(service.getBalance(BOB_C4, BASE_LEDGER))
+            .`as`("Part B: Bob BASE debited").isEqualTo(BOB_BASE - trade.quantity)
+        assertThat(service.getBalance(BOB_C4, QUOTE_LEDGER))
+            .`as`("Part B: Bob QUOTE credited (was 0)").isEqualTo(quoteAmount)
+
+        // Idempotency: trade2 IDs already committed → replay is a no-op
+        service.settleTrade(trade2, BASE_LEDGER, QUOTE_LEDGER)
+        assertThat(service.getBalance(ALICE_C4, QUOTE_LEDGER))
+            .`as`("Part B replay: Alice QUOTE unchanged").isEqualTo(ALICE_QUOTE - quoteAmount)
+        assertThat(service.getBalance(BOB_C4, BASE_LEDGER))
+            .`as`("Part B replay: Bob BASE unchanged").isEqualTo(BOB_BASE - trade.quantity)
     }
 }
