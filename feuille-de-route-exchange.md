@@ -1,6 +1,10 @@
 # Feuille de route — Plateforme d'échange
 
-Document de travail à garder et cocher au fil de l'eau.
+Document de travail vivant. À tenir à jour et committer au fil des portes franchies.
+**Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
+(principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
+
+> **État au 9 juin 2026 :** M0 et M1 franchis et **prouvés** (CI verte, tests chaos réels). Jalon courant : **M2**.
 
 ---
 
@@ -12,16 +16,17 @@ Conséquence à ne jamais oublier : techniquement, c'est plus simple qu'un Binan
 
 ---
 
-## Deux chantiers en parallèle dès le jour 1
+## Deux chantiers en parallèle
 
-### Chantier juridique (le délai le plus long, hors de mon contrôle)
+### Chantier juridique (le délai le plus long, hors de mon contrôle) — LE VRAI CHEMIN CRITIQUE
 
-- [ ] Prendre rendez-vous avec un avocat en droit financier français/européen — **cette semaine**
+- [ ] Prendre rendez-vous avec un avocat en droit financier français/européen
 - [ ] Faire classer juridiquement les actifs créés (MiCA / licence CASP ? ou MiFID II / monnaie électronique ?)
 - [ ] Identifier le régime d'autorisation applicable et constituer le dossier
 - [ ] Suivre l'examen (l'AMF peut prendre ~4 mois après un dossier complet)
 
 Ce chantier tourne en fond pendant tout le développement. S'il démarre tard, il retarde le lancement d'un an.
+**Tant qu'il n'est pas lancé, il prime sur l'avancement technique.**
 
 ### Chantier technique
 
@@ -31,69 +36,69 @@ Voir la feuille de route des jalons plus bas.
 
 ## La pile technique (décidée)
 
-Tout repose sur la JVM pour que le cœur sensible partage un seul langage sûr — c'est aussi le terrain où l'aide de l'IA est la plus fiable.
-
-- **Moteur de matching + carnet d'ordres** : exchange-core (choisi plutôt que viabtc, qui est en C)
-- **Registre des soldes** : TigerBeetle (comptabilité en partie double)
-- **Bus d'événements** : Kafka (ou Redpanda)
+- **Moteur de matching + carnet d'ordres** : exchange-core (JVM)
+- **Registre des soldes** : TigerBeetle (partie double)
+- **Bus d'événements** : Kafka
 - **Services** : Kotlin + Spring Boot
 - **Authentification** : Keycloak
 - **Custody stablecoin** : web3j, clés confiées à un prestataire MPC
-- **Données** : PostgreSQL (utilisateurs, ordres), Redis (cache), TimescaleDB (données de marché)
+- **Données** : PostgreSQL, Redis, TimescaleDB
 - **Frontend** : React + TradingView Lightweight Charts
 - **Infra** : Docker / Kubernetes + Prometheus / Grafana
-- **Non open source (pas d'équivalent sérieux)** : KYC (Sumsub / Onfido), surveillance AML (Chainalysis)
+- **Non open source** : KYC (Sumsub / Onfido), surveillance AML (Chainalysis)
 
 ---
 
 ## Feuille de route — jalons
 
-Principe : chaque jalon est **prouvé**, pas seulement « codé ». On ne passe au suivant que quand la porte est franchie.
+Principe : chaque jalon est **prouvé**, pas seulement « codé ».
 
-### M0 — Le moteur tourne (≈ semaine 1)
+### M0 — Le moteur tourne — ✅ FRANCHI
 
-- [ ] Un test envoie des ordres dans exchange-core et obtient les bons trades
-- [ ] Toute l'infra démarre avec une seule commande (`docker compose up`)
-- [ ] CI verte
+- [x] Un test envoie des ordres dans exchange-core et obtient les bons trades
+- [x] Toute l'infra démarre avec une seule commande (`docker compose up`)
+- [x] CI verte
 
-### M1 — Le settlement est correct (≈ semaine 4) — porte qui porte tout le reste
+### M1 — Le settlement est correct — ✅ FRANCHI ET PROUVÉ
 
-- [ ] Le cycle ordre → matching → règlement fonctionne pour une paire
-- [ ] Les tests « chaos » passent : couper le service en plein milieu, livrer deux fois un événement, rejouer depuis un ancien point
-- [ ] Jamais d'écart entre le solde du moteur et celui du registre
+- [x] Le cycle ordre → matching → règlement fonctionne pour une paire (command-sourced)
+- [x] Tests chaos verts en CI contre **vrai** TigerBeetle + Kafka : double livraison, crash moteur + replay, crash settlement avant commit
+- [x] Réconciliation au niveau solde (engine reconstruit depuis le log = TigerBeetle), sans heuristique de timing, ne se déclenche qu'après fin de replay confirmée
+- [x] Jamais d'écart entre solde moteur et solde registre
 
-**On ne construit rien d'autre avant que cette porte soit verte.**
+Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapshots plus tard) ; garde sur débordement de bits `tradeId` ; flag `LINKED` des deux jambes (M2) ; fragilité seccomp/io_uring des tests.
 
-### M2 — Cœur tradable en argent fictif (≈ semaine 8)
+### M2 — Cœur tradable en argent fictif — ⏳ EN COURS
 
 - [ ] API REST (placer / annuler) + WebSocket (carnet, trades, ticker)
 - [ ] Bougies (candles) enregistrées dans TimescaleDB
 - [ ] Endpoint admin qui crédite un solde (dépôts encore simulés)
+- [ ] Comptes verrouillés + flag `LINKED` sur les deux jambes (clôt TD-4)
 - [ ] Session de trading multi-comptes en ligne de commande, sans dérive de solde
 
-### M3 — Sécurisé (≈ semaine 9)
+### M3 — Sécurisé
 
 - [ ] Keycloak branché, clés d'API émises
-- [ ] Les requêtes non authentifiées sont rejetées
-- [ ] Limites de débit (rate limiting) par utilisateur
+- [ ] Requêtes non authentifiées rejetées
+- [ ] Rate limiting par utilisateur
 
-### M4 — Custody réelle (≈ semaine 13)
+### M4 — Custody réelle (2e zone à haut risque)
 
 - [ ] Dépôt stablecoin avec N confirmations → crédite le registre **puis** le moteur
 - [ ] Retrait : débite-et-verrouille **puis** diffuse on-chain
 - [ ] Un événement rejoué ne crédite jamais deux fois
 - [ ] Gestion des clés revue par quelqu'un de compétent
 
-### M5 — Utilisable (≈ semaine 16)
+### M5 — Utilisable
 
 - [ ] Interface React : graphique, saisie d'ordres, soldes, historique
-- [ ] Tourne sur l'API désormais stabilisée
+- [ ] Tourne sur l'API stabilisée
 
-### M6 — Conforme et durci (en continu après M5)
+### M6 — Conforme et durci
 
 - [ ] KYC/AML réel : bloque les comptes non vérifiés, screene les retraits
-- [ ] Exercice de reprise après panne (snapshot + replay) réellement répété
-- [ ] Test de charge atteignant la cible de volume
+- [ ] Exercice de reprise après panne réellement répété
+- [ ] Test de charge à la cible de volume
 - [ ] Runbook d'incident écrit
 - [ ] Revue de sécurité de la custody et du settlement
 
@@ -107,70 +112,29 @@ Principe : chaque jalon est **prouvé**, pas seulement « codé ». On ne passe 
 
 ## Les trois endroits où le projet se gagne
 
-Le reste est de la plomberie rapide. Ces trois points méritent une attention manuelle — pas du code généré à la chaîne.
+(Détail des invariants : voir `CLAUDE.md`.)
 
-### 1. Le settlement (frontière moteur ↔ registre)
-
-Danger : le moteur garde les soldes en mémoire, TigerBeetle de façon durable ; s'ils divergent en silence, on perd de l'argent sans le savoir.
-
-Invariants de protection :
-- Un seul journal ordonné fait foi
-- Chaque transfert a un identifiant dérivé du numéro de séquence de l'événement → un doublon est ignoré (idempotence)
-- On applique dans l'ordre, on valide l'offset après l'écriture
-- La reprise après panne = simplement rejouer
-- Un job vérifie en continu que solde moteur = solde registre
-- **Les tests « chaos » s'écrivent avant le code**
-
-### 2. La custody
-
-C'est là que les exchanges meurent vraiment — pas à cause du moteur, mais des erreurs de clés, des bugs de retrait, des écarts de réconciliation. Surface la plus attaquée d'internet.
-- Clés confiées à un prestataire MPC
-- Cette partie est auditée
-- Aucun code que je ne comprends pas ligne à ligne
-
-### 3. La conformité
-
-KYC/AML et autorisation ne sont pas une formalité de fin : ils conditionnent le droit d'ouvrir.
-- Crochets de conformité prévus dès le départ (vérification, surveillance, ségrégation des fonds), pas en rustine
+1. **Le settlement** (frontière moteur ↔ registre) — ✅ fondation posée et prouvée en M1.
+2. **La custody** (M4) — là où les exchanges meurent. Clés MPC, audit, aucun code non compris ligne à ligne.
+3. **La conformité** — conditionne le droit d'ouvrir, pas une formalité de fin.
 
 ---
 
-## Cette semaine, concrètement
+## Jalon courant : M2 — tâches concrètes
 
-- [ ] Créer le monorepo Gradle multi-module en Kotlin (modules `engine`, `settlement`, `common`, `gateway` réservé)
-- [ ] Écrire le `docker-compose.yml` qui démarre Kafka, Postgres, Redis, TigerBeetle et Keycloak en une commande
-- [ ] Faire tourner le service `engine` sur Spring Boot avec exchange-core et faire passer le plus petit test de matching réel (= M0)
-- [ ] Mettre la CI en place (GitHub Actions) et la garder verte dès le premier commit
-- [ ] Figer sur papier le modèle de comptes TigerBeetle (disponible / verrouillé par utilisateur et par actif, décomposition d'un trade en transferts, frais)
-- [ ] Prendre rendez-vous avec l'avocat
+- [ ] `gateway` : API REST placer/annuler qui écrit dans le topic `commands` (jamais d'appel direct au moteur)
+- [ ] WebSocket : diffusion du carnet (L2), des trades et du ticker
+- [ ] Agrégation des bougies (OHLCV) dans TimescaleDB
+- [ ] Endpoint admin de crédit (utilitaire, **pas** la logique de dépôt M4)
+- [ ] Comptes verrouillés + flag `LINKED` (clôt TD-4 ; réactiver alors le test chaos 4)
+- [ ] Test de bout en bout : session multi-comptes en ligne de commande, réconciliation sans écart
 
-Les quatre premières tâches sont de la plomberie que l'IA gère bien → avancer vite.
-La cinquième est celle où il faut ralentir et réfléchir soi-même.
-La sixième tourne en parallèle de tout le reste.
+Réflexe de supervision sur chaque fonction touchant un solde : « contre quoi ça tourne, qu'est-ce que ça prouve ? ».
 
 ---
 
 ## Rappel honnête
 
-Atteindre M2 (un exchange qui matche des ordres en argent fictif) est possible en quelques semaines, surtout avec l'IA — et donnera l'impression d'être à 80 %. Ce sera en réalité ~30 %.
-
-Les 70 % restants — correction du settlement, custody, conformité — ne se démontrent pas dans une démo et concentrent l'essentiel du temps et du risque.
-
-Ce n'est pas une raison d'abandonner. C'est une raison de ne pas se précipiter, de faire auditer les deux ou trois points sensibles par quelqu'un d'expérimenté, et de traiter le juridique comme le vrai chemin critique. Le projet est faisable. Il n'est pas facile — et c'est en le sachant qu'on le réussit.
-
----
-
-## Modèle de comptes TigerBeetle (rappel de référence)
-
-- Un **registre (ledger) par actif** : USDT a le sien, chaque actif créé a le sien. Un transfert ne traverse jamais deux registres.
-- Par utilisateur et par actif : un compte **disponible** + un compte **verrouillé**.
-- Comptes système par actif : un compte **externe** (monde extérieur : dépôts / retraits) + un compte **frais**.
-- Partie double : chaque transfert débite un compte et en crédite un autre du **même montant**. Un trade avec frais = plusieurs transferts.
-- Montants en **entiers** (plus petite unité), jamais de nombres à virgule.
-
-Exemple d'un trade (Alice achète à Bob, frais 1 %) :
-- Registre USDT : 5000 quittent « Alice · verrouillé » → 4950 vers « Bob · disponible » + 50 vers « Frais »
-- Registre FOO : 1000 quittent « Bob · verrouillé » → 990 vers « Alice · disponible » + 10 vers « Frais »
-- Vérification : chaque registre reste équilibré (4950 + 50 = 5000 ; 990 + 10 = 1000)
-
-(`FOO` = nom d'exemple, à remplacer par le nom réel de l'actif. Convention de paire : `BASE/QUOTE`, ex. `MONACTIF/USDT`.)
+M0+M1 franchis = la fondation est étanche, mais ce n'est que ~30 % du chemin. Les 70 % restants (custody,
+conformité, durcissement) concentrent le risque et ne se démontrent pas dans une démo. Ne pas se précipiter,
+faire auditer custody + settlement, et traiter le juridique comme le vrai chemin critique.
