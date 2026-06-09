@@ -166,13 +166,14 @@ class DepositChaosIntegrationTest {
                 MountableFile.forClasspathResource("contracts/MockToken.sol"),
                 "/tmp/MockToken.sol"
             )
+            // FOUNDRY_CACHE_PATH overrides the image default (/cache, root-owned).
+            // --out overrides artifact output (/out, also root-owned).
             val result = anvil.execInContainer(
-                "forge", "create",
-                "/tmp/MockToken.sol:MockToken",
-                "--rpc-url", "http://127.0.0.1:8545",
-                "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-                "--legacy",
-                "--out", "/tmp/forge-out"  // /out is permission-denied in foundry image
+                "sh", "-c",
+                "FOUNDRY_CACHE_PATH=/tmp/foundry-cache forge create /tmp/MockToken.sol:MockToken" +
+                " --rpc-url http://127.0.0.1:8545" +
+                " --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" +
+                " --legacy --out /tmp/forge-out"
             )
             check(result.exitCode == 0) {
                 "forge create failed (exit ${result.exitCode}):\nstdout:${result.stdout}\nstderr:${result.stderr}"
