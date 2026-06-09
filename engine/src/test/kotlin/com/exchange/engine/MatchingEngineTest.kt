@@ -113,6 +113,31 @@ class MatchingEngineTest {
     }
 
     @Test
+    fun `place then cancel via offset-identity — matching order sees no trade`() {
+        // Simulate the gateway writing PLACE_ORDER with no orderId in the payload (defaults to 0).
+        // processCommand(offset, cmd) uses offset — not cmd.orderId — as the exchange-core orderId.
+        val placeOffset = nextOffset   // mirrors the offset the gateway would return in the 202
+        val placeResult = cmd(
+            EngineCommand(
+                type = EngineCommand.PLACE_ORDER,
+                uid = BOB_UID, symbolId = SYMBOL_ID,
+                side = OrderSide.ASK, price = 100L, size = 10L
+                // orderId absent (= 0): exactly what the gateway writes
+            )
+        )
+        assertThat(placeResult).isEqualTo(CommandResultCode.SUCCESS)
+
+        // The gateway returns { "orderId": placeOffset } in the 202.
+        // The client sends DELETE /orders/{placeOffset}; the gateway writes:
+        val cancelResult = cmd(EngineCommand.cancelOrder(SYMBOL_ID, BOB_UID, placeOffset))
+        assertThat(cancelResult).isEqualTo(CommandResultCode.SUCCESS)
+
+        // Book must be empty: Alice's matching BID finds nothing — the ASK was cancelled.
+        cmd(EngineCommand.placeOrder(SYMBOL_ID, ALICE_UID, 0L, 100L, 10L, OrderSide.BID))
+        assertThat(publishedTrades).isEmpty()
+    }
+
+    @Test
     fun `replay produces identical trade IDs`() {
         // First run
         cmd(EngineCommand.placeOrder(SYMBOL_ID, BOB_UID, 1L, 100L, 5L, OrderSide.ASK))
