@@ -187,8 +187,9 @@ class SettlementService(private val tb: Client) {
         val errors = tb.createTransfers(batch)
         if (errors.length > 0) {
             while (errors.next()) {
-                if (errors.getResult() != CreateTransferResult.Exists) {
-                    log.error("postPendingWithdrawal failed pendingId={}: {}", pendingId, errors.getResult())
+                val result = errors.getResult()
+                if (result != CreateTransferResult.Exists) {
+                    throw IllegalStateException("postPendingWithdrawal failed pendingId=$pendingId resolvingId=${pendingId or 1L}: $result")
                 }
             }
         }
@@ -209,8 +210,9 @@ class SettlementService(private val tb: Client) {
         val errors = tb.createTransfers(batch)
         if (errors.length > 0) {
             while (errors.next()) {
-                if (errors.getResult() != CreateTransferResult.Exists) {
-                    log.error("voidPendingWithdrawal failed pendingId={}: {}", pendingId, errors.getResult())
+                val result = errors.getResult()
+                if (result != CreateTransferResult.Exists) {
+                    throw IllegalStateException("voidPendingWithdrawal failed pendingId=$pendingId resolvingId=${pendingId or 1L}: $result")
                 }
             }
         }
