@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 9 juin 2026 :** M0 et M1 franchis et **prouvés** (CI verte, tests chaos réels). Jalon courant : **M2**.
+> **État au 9 juin 2026 :** M0, M1 et **M2 franchis et prouvés** (CI verte, tests chaos + E2E réels). Jalon courant : **M3**.
 
 ---
 
@@ -68,13 +68,13 @@ Principe : chaque jalon est **prouvé**, pas seulement « codé ».
 
 Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapshots plus tard) ; garde sur débordement de bits `tradeId` ; flag `LINKED` des deux jambes (M2) ; fragilité seccomp/io_uring des tests.
 
-### M2 — Cœur tradable en argent fictif — ⏳ EN COURS
+### M2 — Cœur tradable en argent fictif — ✅ FRANCHI ET PROUVÉ
 
-- [ ] API REST (placer / annuler) + WebSocket (carnet, trades, ticker)
-- [ ] Bougies (candles) enregistrées dans TimescaleDB
+- [x] API REST (placer / annuler) + WebSocket (carnet, trades, ticker)
+- [x] Bougies (candles) enregistrées dans TimescaleDB
 - [x] Endpoint admin qui crédite un solde (dépôts encore simulés)
 - [x] Comptes verrouillés + flag `LINKED` sur les deux jambes (clôt TD-4)
-- [ ] Session de trading multi-comptes en ligne de commande, sans dérive de solde
+- [x] Session de trading multi-comptes en ligne de commande, sans dérive de solde
 
 ### M3 — Sécurisé
 
@@ -114,7 +114,7 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 
 (Détail des invariants : voir `CLAUDE.md`.)
 
-1. **Le settlement** (frontière moteur ↔ registre) — ✅ fondation posée et prouvée en M1.
+1. **Le settlement** (frontière moteur ↔ registre) — ✅ fondation posée et prouvée en M1+M2.
 2. **La custody** (M4) — là où les exchanges meurent. Clés MPC, audit, aucun code non compris ligne à ligne.
 3. **La conformité** — conditionne le droit d'ouvrir, pas une formalité de fin.
 
