@@ -19,6 +19,7 @@ dependencies {
 
     // Kafka
     implementation("org.springframework.kafka:spring-kafka")
+    implementation("com.google.guava:guava:33.3.1-jre")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.kafka:spring-kafka-test")

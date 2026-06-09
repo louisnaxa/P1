@@ -34,6 +34,10 @@ spring:
           # Override via SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI in prod.
           jwk-set-uri: http://localhost:8080/realms/exchange/protocol/openid-connect/certs
 
+exchange:
+  rate-limit:
+    orders-per-second: 10.0
+
 logging:
   level:
     com.exchange: DEBUG

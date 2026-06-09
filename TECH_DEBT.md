@@ -131,3 +131,24 @@ avec un topic pré-peuplé, vérifiant que la détection de fin de replay se dé
 sans pilotage manuel.
 
 **Planned milestone**: M3 ou lors de l'adoption d'une infrastructure de test multi-services.
+
+---
+
+## TD-10 — Rate limiting en mémoire locale, non distribué + map sans éviction
+
+**Location**: `OrderRateLimitFilter` — `ConcurrentHashMap<String, RateLimiter>`
+
+**Problème 1 — multi-instance** : chaque instance gateway a sa propre map de `RateLimiter`.
+En production multi-instance (derrière un load balancer), un utilisateur obtient son quota ×
+le nombre d'instances. Pour 10 req/s et 3 instances, le quota réel est 30 req/s. Le fix est un
+rate limiting distribué via Redis (déjà dans la pile), par exemple avec un compteur INCR + TTL
+ou une sliding window via Lua. Acceptable M3 (mono-instance), non-acceptable à partir du
+moment où le gateway scale horizontalement.
+
+**Problème 2 — fuite mémoire lente** : la map grandit à chaque nouvel utilisateur et n'est
+jamais nettoyée. Un utilisateur qui s'authentifie une seule fois occupe un `RateLimiter` pour
+toujours. En production longue durée avec beaucoup d'utilisateurs, cela représente une
+accumulation lente. Fix : Guava `Cache` avec TTL d'éviction (ex. 1h d'inactivité) ou Redis
+(résout les deux problèmes à la fois).
+
+**Planned milestone**: avant scale horizontal du gateway (Redis rate limiting remplace les deux).
