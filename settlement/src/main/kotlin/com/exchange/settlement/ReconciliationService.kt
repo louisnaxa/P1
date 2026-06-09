@@ -2,88 +2,100 @@ package com.exchange.settlement
 
 import com.exchange.common.OrderSide
 import com.exchange.common.TradeEvent
-import com.tigerbeetle.Client
-import com.tigerbeetle.IdBatch
 import org.slf4j.LoggerFactory
 import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Verifies that every trade settled by this service is durably recorded in
- * TigerBeetle ("engine balance = register balance").
+ * Balance-level reconciliation: engine balance == TigerBeetle balance.
  *
- * Source of truth for the engine side: the Kafka trades topic (same stream
- * the matching engine replays from on restart). For every TradeEvent consumed,
- * both TigerBeetle transfers must exist after settlement.
+ * "Engine balance" is reconstructed from the same Kafka streams the engine uses:
+ *   - AdjustBalanceConsumer feeds initial credits (replayed from commands offset 0)
+ *   - TradeConsumer feeds per-trade debits/credits (replayed from trades offset 0)
  *
- * A missing transfer means a settlement was silently lost.  The service stops
- * immediately to prevent further balance divergence.
+ * Because the trades topic accumulates one copy per engine restart, trade events
+ * are deduplicated by tradeId so each trade is counted exactly once.
+ *
+ * Every 30 s the scheduler compares expected vs actual TigerBeetle balance for
+ * every tracked (uid, ledger) pair.  Any divergence → ERROR log + ctx.close().
+ *
+ * Limitation: the 30 s initial delay is a heuristic to let Kafka replay finish
+ * before the first check.  For very large histories, increase initialDelay.
  */
 @Component
 class ReconciliationService(
-    private val tb: Client,
+    private val settlementService: SettlementService,
     private val ctx: ConfigurableApplicationContext
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    private data class SettledTrade(
-        val tradeId: Long,
-        val buyerUid: Long,
-        val sellerUid: Long
-    )
+    // uid → (ledger → expected balance).  AtomicLong supports concurrent updates
+    // from AdjustBalanceConsumer and TradeConsumer threads.
+    private val expected = ConcurrentHashMap<Long, ConcurrentHashMap<Int, AtomicLong>>()
 
-    private val settled = ConcurrentLinkedQueue<SettledTrade>()
+    // Trades topic accumulates duplicates on each engine restart; deduplicate here.
+    private val seenTradeIds = ConcurrentHashMap.newKeySet<Long>()
 
-    /** Called by TradeConsumer immediately after each successful settleTrade(). */
-    fun record(trade: TradeEvent) {
+    /** Called by AdjustBalanceConsumer for each credit applied from the command log. */
+    fun recordCredit(uid: Long, ledger: Int, amount: Long) {
+        expected.computeIfAbsent(uid) { ConcurrentHashMap() }
+            .computeIfAbsent(ledger) { AtomicLong(0L) }
+            .addAndGet(amount)
+    }
+
+    /**
+     * Called by TradeConsumer after each settlement.
+     * Deduplicates by tradeId — safe to call multiple times for the same trade.
+     */
+    fun recordTrade(trade: TradeEvent, baseLedger: Int, quoteLedger: Int) {
+        if (!seenTradeIds.add(trade.tradeId)) return  // duplicate from engine replay
+
         val (buyerUid, sellerUid) = if (trade.takerSide == OrderSide.BID)
             trade.takerUserId to trade.makerUserId
         else
             trade.makerUserId to trade.takerUserId
-        settled.add(SettledTrade(trade.tradeId, buyerUid, sellerUid))
+        val quoteAmount = trade.price * trade.quantity
+        val baseAmount  = trade.quantity
+
+        recordCredit(buyerUid,  baseLedger,   baseAmount)   // buyer  receives base
+        recordCredit(buyerUid,  quoteLedger, -quoteAmount)  // buyer  pays     quote
+        recordCredit(sellerUid, quoteLedger,  quoteAmount)  // seller receives quote
+        recordCredit(sellerUid, baseLedger,  -baseAmount)   // seller pays     base
     }
 
-    /**
-     * Every 30 s (after an initial 30 s warm-up to let Kafka replay finish):
-     * look up both TigerBeetle transfers for every recorded trade and verify
-     * they exist.  Any missing transfer → log ERROR and stop the service.
-     */
     @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
     fun reconcile() {
-        val snapshot = settled.toList()
-        if (snapshot.isEmpty()) {
-            log.debug("Reconciliation skipped — no trades recorded yet")
+        val accountCount = expected.values.sumOf { it.size }
+        if (accountCount == 0) {
+            log.debug("Reconciliation skipped — no accounts tracked yet")
             return
         }
 
-        var missing = 0
-        for (st in snapshot) {
-            val leg0 = (st.tradeId shl 4) or 0L
-            val leg1 = (st.tradeId shl 4) or 1L
-            val ids = IdBatch(2)
-            ids.add(); ids.setId(leg0, 0L)
-            ids.add(); ids.setId(leg1, 0L)
-            val found = tb.lookupTransfers(ids).length
-            if (found != 2) {
-                log.error(
-                    "RECONCILIATION MISMATCH tradeId={} buyer={} seller={}: " +
-                        "expected 2 TigerBeetle transfers, found {}",
-                    st.tradeId, st.buyerUid, st.sellerUid, found
-                )
-                missing++
+        var mismatches = 0
+        for ((uid, ledgers) in expected) {
+            for ((ledger, exp) in ledgers) {
+                val actual = settlementService.getBalance(uid, ledger)
+                if (actual != exp.get()) {
+                    log.error(
+                        "RECONCILIATION MISMATCH uid={} ledger={} expected={} actual={}",
+                        uid, ledger, exp.get(), actual
+                    )
+                    mismatches++
+                }
             }
         }
 
-        if (missing > 0) {
+        if (mismatches > 0) {
             log.error(
-                "Reconciliation FAILED: {}/{} trades missing from TigerBeetle — stopping service",
-                missing, snapshot.size
+                "Reconciliation FAILED: {}/{} account(s) diverged — stopping service",
+                mismatches, accountCount
             )
             ctx.close()
         } else {
-            log.info("Reconciliation OK — {}/{} trades verified in TigerBeetle", snapshot.size, snapshot.size)
+            log.info("Reconciliation OK — {}/{} account(s) match TigerBeetle", accountCount, accountCount)
         }
     }
 }
