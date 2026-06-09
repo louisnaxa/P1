@@ -7,13 +7,22 @@ import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.kafka.test.EmbeddedKafkaBroker
 import org.springframework.kafka.test.context.EmbeddedKafka
+import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.test.annotation.DirtiesContext
 import java.time.Duration
 import java.util.*
@@ -24,6 +33,10 @@ import java.util.*
  *      returned in the 202 body matches the Kafka record's actual offset.
  *   2. DELETE /orders/{orderId} writes a CANCEL_ORDER whose cmd.orderId equals the
  *      offset returned by POST — completing the identity chain.
+ *
+ * Passes through the real security filter chain using a mocked JwtDecoder — the chain
+ * is exercised (not bypassed), uid is resolved from the token subject via the mocked
+ * UserService, and the test focuses on the HTTP→Kafka identity guarantee.
  *
  * Engine-level proof (offset→orderId→cancel) is in PlaceCancelLifecycleTest (engine module).
  */
@@ -42,21 +55,64 @@ class OrderLifecycleTest {
     @Autowired
     private lateinit var embeddedKafka: EmbeddedKafkaBroker
 
+    @MockBean
+    private lateinit var userService: UserService
+
+    @MockBean
+    private lateinit var jwtDecoder: JwtDecoder
+
+    // Prevent these listeners from subscribing to topics not created by @EmbeddedKafka
+    @MockBean
+    private lateinit var orderBookConsumer: OrderBookConsumer
+
+    @MockBean
+    private lateinit var tradeStreamConsumer: TradeStreamConsumer
+
+    @MockBean
+    private lateinit var candleAggregator: CandleAggregator
+
     private val mapper = ObjectMapper()
+
+    // Stable fake JWT used in every request — subject is irrelevant, what matters is
+    // that the real BearerTokenAuthenticationFilter authenticates successfully and
+    // authentication.name ("test-sub") is resolved to uid=42L by the mocked UserService.
+    private val fakeJwt: Jwt = Jwt.withTokenValue("test-token")
+        .header("alg", "RS256")
+        .subject("test-sub")
+        .build()
+
+    private val authHeaders = HttpHeaders().apply {
+        set("Authorization", "Bearer test-token")
+    }
+
+    @BeforeEach
+    fun setUp() {
+        whenever(jwtDecoder.decode(any())).thenReturn(fakeJwt)
+        whenever(userService.resolveUid(any())).thenReturn(42L)
+    }
 
     @Test
     fun `place then cancel - CANCEL_ORDER carries the exact offset returned by POST`() {
         // ── Place a BID order via HTTP ──────────────────────────────────────────
-        val placeResp = restTemplate.postForEntity(
+        val placeResp = restTemplate.exchange(
             "/orders",
-            PlaceOrderRequest(uid = 42, symbolId = 1, side = com.exchange.common.OrderSide.BID, price = 100L, quantity = 5L),
+            HttpMethod.POST,
+            HttpEntity(
+                PlaceOrderRequest(symbolId = 1, side = com.exchange.common.OrderSide.BID, price = 100L, quantity = 5L),
+                authHeaders
+            ),
             OrderResponse::class.java
         )
         assertThat(placeResp.statusCode).isEqualTo(HttpStatus.ACCEPTED)
         val orderId = placeResp.body!!.orderId
 
         // ── Cancel using the orderId returned by POST ───────────────────────────
-        restTemplate.delete("/orders/$orderId?uid=42&symbolId=1")
+        restTemplate.exchange(
+            "/orders/$orderId?symbolId=1",
+            HttpMethod.DELETE,
+            HttpEntity<Void>(null, authHeaders),
+            Void::class.java
+        )
 
         // ── Read both commands from the topic and verify the identity chain ─────
         kafkaConsumer().use { consumer ->

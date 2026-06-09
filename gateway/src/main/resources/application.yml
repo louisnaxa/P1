@@ -26,6 +26,13 @@ spring:
     url: jdbc:postgresql://localhost:5432/exchange
     username: exchange
     password: exchange
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Keycloak JWKS endpoint — realm name "exchange" assumed for dev.
+          # Override via SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI in prod.
+          jwk-set-uri: http://localhost:8080/realms/exchange/protocol/openid-connect/certs
 
 logging:
   level:
