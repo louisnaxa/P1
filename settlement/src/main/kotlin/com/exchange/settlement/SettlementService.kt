@@ -7,6 +7,7 @@ import com.tigerbeetle.AccountFlags
 import com.tigerbeetle.Client
 import com.tigerbeetle.IdBatch
 import com.tigerbeetle.TransferBatch
+import com.tigerbeetle.TransferFlags
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
@@ -20,12 +21,22 @@ class SettlementService(private val tb: Client) {
      * TigerBeetle returns "exists" for duplicate IDs (idempotent).
      */
     fun ensureAccount(userId: Long, ledgerId: Int) {
-        val batch = AccountBatch(1)
+        val batch = AccountBatch(2)
+
+        // Available account — holds spendable funds
         batch.add()
         batch.setId(AccountIds.available(userId, ledgerId))
         batch.setLedger(ledgerId)
         batch.setCode(1)
         batch.setFlags(AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS)
+
+        // Locked account — holds reserved funds for two-phase settlement (M2)
+        batch.add()
+        batch.setId(AccountIds.locked(userId, ledgerId))
+        batch.setLedger(ledgerId)
+        batch.setCode(2)
+        batch.setFlags(AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS)
+
         tb.createAccounts(batch)
     }
 
@@ -88,7 +99,8 @@ class SettlementService(private val tb: Client) {
 
         val batch = TransferBatch(2)
 
-        // Transfer 1: quote currency (buyer → seller)
+        // Transfer 1: quote currency (buyer → seller). LINKED to transfer 2:
+        // if leg 1 fails, TigerBeetle rolls back leg 0 atomically (closes TD-4).
         batch.add()
         batch.setId(transferId(trade.tradeId, 0))
         batch.setDebitAccountId(AccountIds.available(buyerUid, quoteLedger))
@@ -96,8 +108,9 @@ class SettlementService(private val tb: Client) {
         batch.setAmount(quoteAmount)
         batch.setLedger(quoteLedger)
         batch.setCode(1)
+        batch.setFlags(TransferFlags.LINKED)
 
-        // Transfer 2: base currency (seller → buyer)
+        // Transfer 2: base currency (seller → buyer). Chain terminator — no LINKED.
         batch.add()
         batch.setId(transferId(trade.tradeId, 1))
         batch.setDebitAccountId(AccountIds.available(sellerUid, baseLedger))

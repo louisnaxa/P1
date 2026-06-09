@@ -49,23 +49,11 @@ Mitigation options when the need arises:
 
 ---
 
-## TD-4 — Two trade legs not atomically linked in TigerBeetle
+## TD-4 — ~~Two trade legs not atomically linked in TigerBeetle~~ ✓ CLOSED
 
-**Location**: `SettlementService.kt:89-109`
-
-Both legs (quote and base) are submitted in a single `createTransfers(batch)` call but without
-`TransferFlags.LINKED`.  TigerBeetle processes them independently: if leg 1 fails (e.g. a future
-balance constraint on a locked account), leg 0 is already committed and the trade is half-settled.
-
-In M1 this cannot happen (user accounts have no upper-bound constraint and both legs always fit).
-In M2 (locked accounts, real margin checks) this becomes a correctness risk.
-
-Fix for M2: set `TransferFlags.LINKED` on leg 0 so that a leg 1 failure rolls back leg 0:
-```kotlin
-batch.setFlags(TransferFlags.LINKED)   // on leg 0 only; leg 1 keeps flags = 0
-```
-
-**Planned milestone**: M2 / locked accounts.
+**Fixed**: `SettlementService.kt` — `TransferFlags.LINKED` set on leg 0.
+`ensureAccount` now creates both available and locked accounts.
+Chaos 4 test re-enabled and rewritten to verify LINKED atomicity against real TigerBeetle.
 
 ---
 
@@ -98,3 +86,21 @@ Fix : quand l'infra de test multi-services existe (Testcontainers Compose ou éq
 le trade ou l'annulation dans la réponse WebSocket ou le topic trades.
 
 **Planned milestone**: M5 ou quand la complexité inter-services le justifie.
+
+---
+
+## TD-7 — Test replay-gate pilote onCommand directement, pas le listener réel
+
+**Location**: `EngineReplayGateTest.EngineCommandConsumerReplayTest`
+
+Le test appelle `consumer.onCommand(cr)` manuellement après avoir construit le
+`ConsumerRecord` en mémoire. Il n'exerce pas le vrai chemin
+`@KafkaListener → onPartitionsAssigned → seekToBeginning → détection de fin de replay`
+en conditions Spring Kafka réelles. En particulier, le seek appliqué par le callback
+réel (pas `NoOpSeekCallback`) n'est jamais déclenché.
+
+Fix : test d'intégration complet démarrant un `KafkaMessageListenerContainer` réel
+avec un topic pré-peuplé, vérifiant que la détection de fin de replay se déclenche
+sans pilotage manuel.
+
+**Planned milestone**: M3 ou lors de l'adoption d'une infrastructure de test multi-services.

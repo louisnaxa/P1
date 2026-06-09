@@ -29,7 +29,7 @@ class TradeIdDeterminismTest {
     fun `same offsets produce identical tradeId across engine restarts`() {
         fun runEngine(): Long {
             val trades = mutableListOf<TradeEvent>()
-            val engine = MatchingEngineService { trades.add(it) }
+            val engine = MatchingEngineService(tradePublisher = { trades.add(it) })
             engine.init()
             var offset = 0L
             fun cmd(c: EngineCommand) = engine.processCommand(offset++, c)

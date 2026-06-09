@@ -22,7 +22,6 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.KafkaContainer
@@ -259,7 +258,7 @@ class SettlementChaosIntegrationTest {
          */
         fun runEngine(onTrade: (TradeEvent) -> Unit): TradeEvent {
             val captured = mutableListOf<TradeEvent>()
-            val engine = MatchingEngineService { t -> captured.add(t); onTrade(t) }
+            val engine = MatchingEngineService(tradePublisher = { t -> captured.add(t); onTrade(t) })
             engine.init()
             var offset = 0L
             fun cmd(c: EngineCommand) = engine.processCommand(offset++, c)
@@ -356,26 +355,22 @@ class SettlementChaosIntegrationTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // M2 regression — missing LINKED flag: leg 1 failure leaves leg 0 applied
+    // Chaos 4 — LINKED flag: leg 1 failure rolls back leg 0 atomically (TD-4)
     //
-    // settleTrade submits both legs in ONE createTransfers(batch) call without
-    // TransferFlags.LINKED.  The legs are independent: if leg 1 fails (e.g. a
-    // balance-constraint or missing-account error in M2), leg 0 stays committed.
-    //
-    // This cannot happen in M1 — user accounts have no upper-bound constraint
-    // and both legs always fit.  It becomes a correctness risk in M2 when locked
-    // accounts and real margin checks are introduced (see TD-4 in TECH_DEBT.md).
+    // settleTrade submits both legs with TransferFlags.LINKED on leg 0.
+    // If leg 1 fails (e.g. a missing account), TigerBeetle rolls back leg 0
+    // in the same atomic batch — no partial state is ever committed.
     //
     // Test scenario:
     //   1. Bob's base account is intentionally absent → leg 1 (base: Bob→Alice)
-    //      returns DEBIT_ACCOUNT_NOT_FOUND; leg 0 (quote: Alice→Bob) succeeds.
+    //      returns DEBIT_ACCOUNT_NOT_FOUND; leg 0 is rolled back atomically.
+    //      ALL balances remain unchanged.
     //   2. Bob's base account is created and funded (operator remediation).
-    //   3. Full settleTrade replayed → leg 0 EXISTS (no-op), leg 1 applied.
+    //   3. Full settleTrade replayed → both legs succeed → trade fully settled.
     //   4. Balances == exactly one complete trade; leg 0 not double-counted.
     // ─────────────────────────────────────────────────────────────────────────
     @Test
-    @Disabled("régression M2 — voir TD-4")
-    fun `m2 regression - without LINKED flag leg 0 survives leg 1 failure and replay completes trade`() {
+    fun `chaos 4 - LINKED flag rolls back both legs atomically when leg 1 account missing`() {
         // Set up accounts for both users — Bob's base account intentionally omitted
         service.ensureAccount(ALICE_C4, BASE_LEDGER)
         service.ensureAccount(ALICE_C4, QUOTE_LEDGER)
@@ -397,20 +392,18 @@ class SettlementChaosIntegrationTest {
             takerSide    = OrderSide.BID,
             timestampNs  = 0L
         )
-        val quoteAmount = trade.price * trade.quantity  // 500
-        val baseAmount  = trade.quantity                // 5
 
-        // ── First call: leg 0 succeeds, leg 1 fails (Bob has no base account) ──
-        // SettlementService logs a warn for errors.length > 0 and returns normally
+        // ── First call: leg 1 fails (Bob has no base account) ─────────────────
+        // LINKED on leg 0 → TigerBeetle rolls back leg 0 atomically.
+        // No transfers committed; all balances unchanged.
         service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
 
-        // Half-settled: quote transferred, base untouched
         assertThat(service.getBalance(ALICE_C4, QUOTE_LEDGER))
-            .`as`("Alice quote: leg 0 applied").isEqualTo(ALICE_QUOTE - quoteAmount)
+            .`as`("Alice quote: leg 0 rolled back").isEqualTo(ALICE_QUOTE)
         assertThat(service.getBalance(BOB_C4,   QUOTE_LEDGER))
-            .`as`("Bob quote: leg 0 applied").isEqualTo(BOB_QUOTE + quoteAmount)
+            .`as`("Bob quote: leg 0 rolled back").isEqualTo(BOB_QUOTE)
         assertThat(service.getBalance(ALICE_C4, BASE_LEDGER))
-            .`as`("Alice base: leg 1 not yet applied").isEqualTo(ALICE_BASE)
+            .`as`("Alice base: unchanged").isEqualTo(ALICE_BASE)
         assertThat(service.getBalance(BOB_C4,   BASE_LEDGER))
             .`as`("Bob base account missing → balance 0").isEqualTo(0L)
 
@@ -418,19 +411,13 @@ class SettlementChaosIntegrationTest {
         service.ensureAccount(BOB_C4, BASE_LEDGER)
         service.deposit(BOB_C4, BASE_LEDGER, BOB_BASE, depositSeq.getAndIncrement())
 
-        // ── Replay: leg 0 → EXISTS (no-op), leg 1 → applied ──────────────────
+        // ── Retry: both legs succeed (transfer IDs are fresh — not previously committed) ──
         service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
 
-        // Leg 0 must NOT be double-counted
-        assertThat(service.getBalance(ALICE_C4, QUOTE_LEDGER))
-            .`as`("leg 0 must not be double-counted").isEqualTo(ALICE_QUOTE - quoteAmount)
-        assertThat(service.getBalance(ALICE_C4, BASE_LEDGER))
-            .`as`("leg 1 applied by replay").isEqualTo(ALICE_BASE + baseAmount)
-
-        // Full invariant: real TigerBeetle balances == one complete trade
+        // Full invariant: real TigerBeetle balances == exactly one complete trade
         assertSingleTrade(ALICE_C4, BOB_C4, price = trade.price, qty = trade.quantity)
 
-        // A second replay is a complete no-op (both legs exist)
+        // A second replay is a complete no-op (both legs now exist)
         service.settleTrade(trade, BASE_LEDGER, QUOTE_LEDGER)
         assertSingleTrade(ALICE_C4, BOB_C4, price = trade.price, qty = trade.quantity)
     }
