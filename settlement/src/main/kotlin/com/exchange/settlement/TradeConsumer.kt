@@ -13,7 +13,10 @@ import org.springframework.stereotype.Component
  * If settlement fails, the message is redelivered on restart.
  */
 @Component
-class TradeConsumer(private val settlementService: SettlementService) {
+class TradeConsumer(
+    private val settlementService: SettlementService,
+    private val reconciliation: ReconciliationService
+) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -28,6 +31,7 @@ class TradeConsumer(private val settlementService: SettlementService) {
 
         // TODO: symbol → ledger mapping will be managed properly in M2
         settlementService.settleTrade(trade, baseLedger = 10, quoteLedger = 11)
+        reconciliation.record(trade)
 
         // Commit only after TigerBeetle write succeeded
         ack.acknowledge()
