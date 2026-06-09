@@ -51,31 +51,65 @@ class WithdrawalService(
     /**
      * Broadcast all LOCKED withdrawals.
      *
-     * Anti-double-broadcast: reads state before calling signer; the UPDATE uses
-     * WHERE state = 'LOCKED' so a concurrent transition (e.g. another instance
-     * already broadcast this row) makes the UPDATE a no-op.
+     * Two-phase to guarantee nonce ordering (hard Ethereum constraint: nonce N+1 is
+     * blocked on-chain until nonce N is mined):
      *
-     * Called by the scheduler. Also serves as crash-1 recovery on restart:
-     * LOCKED rows whose broadcast was not started are naturally picked up here.
+     *   Phase 1 — Assign nonces: for every LOCKED row that has no nonce yet, assign
+     *     NEXTVAL('withdrawal_nonce_seq') in id-ascending order. Each assignment is an
+     *     individual UPDATE committed immediately so the nonce survives a crash between
+     *     phase 1 and phase 2 (crash-3b recovery: on restart the row already has a nonce,
+     *     NEXTVAL is NOT called again, the signer receives the same nonce).
+     *
+     *   Phase 2 — Sign and broadcast: process all LOCKED rows that have a nonce, ordered
+     *     by nonce ASC to guarantee on-chain ordering. Signer exceptions are caught per
+     *     row so a single failure does not block lower-nonce transactions.
+     *     Anti-double-broadcast: the terminal UPDATE uses WHERE state = 'LOCKED' so a
+     *     concurrent transition makes it a no-op.
+     *
+     * Called by the scheduler. Also serves as crash-1 recovery (LOCKED, nonce=NULL) and
+     * crash-3b recovery (LOCKED, nonce already set).
      */
     fun broadcastPending() {
-        val rows = jdbc.queryForList("SELECT id, destination_address, amount, currency FROM withdrawals WHERE state = 'LOCKED'")
+        // Phase 1: assign nonces to all LOCKED rows that don't have one yet, ORDER BY id
+        val toAssign = jdbc.queryForList(
+            "SELECT id FROM withdrawals WHERE state = 'LOCKED' AND nonce IS NULL ORDER BY id ASC"
+        )
+        for (row in toAssign) {
+            val id = row["id"] as Long
+            jdbc.update(
+                "UPDATE withdrawals SET nonce = NEXTVAL('withdrawal_nonce_seq') WHERE id = ? AND state = 'LOCKED' AND nonce IS NULL",
+                id
+            )
+            log.debug("broadcastPending: assigned nonce to withdrawal {}", id)
+        }
+
+        // Phase 2: sign and broadcast all LOCKED rows with a nonce, ORDER BY nonce ASC
+        val rows = jdbc.queryForList(
+            "SELECT id, destination_address, amount, currency, nonce FROM withdrawals WHERE state = 'LOCKED' AND nonce IS NOT NULL ORDER BY nonce ASC"
+        )
         for (row in rows) {
             val id       = row["id"] as Long
             val dest     = row["destination_address"] as String
             val amount   = row["amount"] as Long
             val currency = row["currency"] as Int
-            val signed = signer.sign(id, dest, amount, currency)
-            val updated = jdbc.update(
-                """UPDATE withdrawals
-                   SET state = 'BROADCAST', tx_hash = ?, nonce = ?, raw_tx = ?, updated_at = NOW()
-                   WHERE id = ? AND state = 'LOCKED'""",
-                signed.txHash, signed.nonce, signed.rawTx, id
-            )
-            if (updated == 0) {
-                log.warn("broadcastPending: withdrawal {} already transitioned — skipping", id)
-            } else {
-                log.info("broadcastPending: withdrawal {} → BROADCAST txHash={}", id, signed.txHash)
+            val nonce    = row["nonce"] as Long
+            try {
+                val signed = signer.sign(id, dest, amount, currency, nonce)
+                val updated = jdbc.update(
+                    """UPDATE withdrawals
+                       SET state = 'BROADCAST', tx_hash = ?, raw_tx = ?, updated_at = NOW()
+                       WHERE id = ? AND state = 'LOCKED'""",
+                    signed.txHash, signed.rawTx, id
+                )
+                if (updated == 0) {
+                    log.warn("broadcastPending: withdrawal {} already transitioned — skipping", id)
+                } else {
+                    log.info("broadcastPending: withdrawal {} → BROADCAST nonce={} txHash={}", id, nonce, signed.txHash)
+                }
+            } catch (e: Exception) {
+                // Signer failure: nonce is preserved in DB for crash-3b retry on next invocation.
+                // Lower-nonce transactions are not blocked by this failure.
+                log.error("broadcastPending: signer failed for withdrawal {} nonce={} — will retry", id, nonce, e)
             }
         }
     }

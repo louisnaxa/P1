@@ -14,6 +14,11 @@
 --   NULLs are allowed (multiple rows can be LOCKED simultaneously).
 --
 -- nonce, raw_tx: populated by the MPC signer sub-lot (currently NULL).
+-- Per-wallet nonce counter. One sequence covers the single M4 hot wallet.
+-- In production, initialise to eth_getTransactionCount(wallet, 'pending') on first deploy.
+-- Nonce gap management (cancellation tx) is handled in the MPC sub-lot.
+CREATE SEQUENCE IF NOT EXISTS withdrawal_nonce_seq MINVALUE 0 START WITH 0 INCREMENT BY 1;
+
 CREATE TABLE IF NOT EXISTS withdrawals (
     id                  BIGINT       PRIMARY KEY,
     uid                 BIGINT       NOT NULL,

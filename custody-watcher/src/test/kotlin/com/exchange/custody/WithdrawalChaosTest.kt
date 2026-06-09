@@ -13,10 +13,12 @@ import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestMethodOrder
+import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.anyLong
 import org.mockito.Mockito.anyString
 import org.mockito.Mockito.clearInvocations
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.eq
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
@@ -81,11 +83,10 @@ class WithdrawalChaosTest {
             createSchema()
 
             signer = mock(WithdrawalSigner::class.java)
-            `when`(signer.sign(anyLong(), anyString(), anyLong(), anyInt()))
+            `when`(signer.sign(anyLong(), anyString(), anyLong(), anyInt(), anyLong()))
                 .thenAnswer { inv ->
                     WithdrawalSigner.SignResult(
                         txHash = "0xmock_${inv.getArgument<Long>(0)}",
-                        nonce  = -1L,
                         rawTx  = ""
                     )
                 }
@@ -100,6 +101,7 @@ class WithdrawalChaosTest {
         }
 
         private fun createSchema() {
+            jdbc.execute("CREATE SEQUENCE IF NOT EXISTS withdrawal_nonce_seq MINVALUE 0 START WITH 0 INCREMENT BY 1")
             jdbc.execute("""CREATE TABLE withdrawals (
                 id                  BIGINT       PRIMARY KEY,
                 uid                 BIGINT       NOT NULL,
@@ -176,7 +178,7 @@ class WithdrawalChaosTest {
     fun `W3 - broadcastPending transitions LOCKED to BROADCAST and calls signer once`() {
         service.broadcastPending()
 
-        verify(signer, times(1)).sign(eq(1L), anyString(), eq(AMOUNT), eq(CURRENCY))
+        verify(signer, times(1)).sign(eq(1L), anyString(), eq(AMOUNT), eq(CURRENCY), anyLong())
         assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 1", String::class.java))
             .isEqualTo("BROADCAST")
         assertThat(jdbc.queryForObject("SELECT tx_hash FROM withdrawals WHERE id = 1", String::class.java))
@@ -226,7 +228,7 @@ class WithdrawalChaosTest {
         // Simulate restart: broadcastPending() is the recovery path
         service.broadcastPending()
 
-        verify(signer, times(1)).sign(eq(100L), anyString(), eq(AMOUNT), eq(CURRENCY))
+        verify(signer, times(1)).sign(eq(100L), anyString(), eq(AMOUNT), eq(CURRENCY), anyLong())
         assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 100", String::class.java))
             .isEqualTo("BROADCAST")
     }
@@ -257,7 +259,7 @@ class WithdrawalChaosTest {
         assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 200", String::class.java))
             .isEqualTo("CONFIRMED")
         // THE KEY ASSERTION: signer must never be called during confirmation
-        verify(signer, never()).sign(anyLong(), anyString(), anyLong(), anyInt())
+        verify(signer, never()).sign(anyLong(), anyString(), anyLong(), anyInt(), anyLong())
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -284,5 +286,95 @@ class WithdrawalChaosTest {
         // DB state
         assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 300", String::class.java))
             .isEqualTo("VOID")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // N8 — Nonce ordering: signer called in strictly ascending nonce order
+    //
+    // Hard Ethereum constraint: nonce N+1 is blocked on-chain until nonce N is mined.
+    // Proves that broadcastPending() assigns nonces in id-ascending order and calls
+    // the signer in nonce-ascending order — both conditions required for safe broadcast.
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @Order(8)
+    fun `N8 - nonces assigned and signer called in strictly ascending order`() {
+        setupExtraUser(uid = UID + 4, depositTransferId = 20L)
+        setupExtraUser(uid = UID + 5, depositTransferId = 21L)
+        setupExtraUser(uid = UID + 6, depositTransferId = 22L)
+
+        // Initiate 3 withdrawals. Order matters: lower id → lower nonce.
+        service.initiate(UID + 4, CURRENCY, AMOUNT, DEST, withdrawalId = 1000L)
+        service.initiate(UID + 5, CURRENCY, AMOUNT, DEST, withdrawalId = 2000L)
+        service.initiate(UID + 6, CURRENCY, AMOUNT, DEST, withdrawalId = 3000L)
+
+        service.broadcastPending()
+
+        // Capture the nonce argument (index 4) passed to signer.sign() for each call
+        val nonceCaptor = ArgumentCaptor.forClass(Long::class.java)
+        verify(signer, times(3)).sign(anyLong(), anyString(), anyLong(), anyInt(), nonceCaptor.capture())
+        val capturedNonces = nonceCaptor.allValues
+
+        // Nonces must be strictly ascending (not just unique — ordering is mandatory)
+        assertThat(capturedNonces[0]).`as`("nonce[0] < nonce[1]").isLessThan(capturedNonces[1])
+        assertThat(capturedNonces[1]).`as`("nonce[1] < nonce[2]").isLessThan(capturedNonces[2])
+
+        // DB nonces must match the ascending order of withdrawal ids
+        val dbNonces = jdbc.queryForList(
+            "SELECT nonce FROM withdrawals WHERE id IN (1000, 2000, 3000) ORDER BY id ASC",
+            Long::class.java
+        )
+        assertThat(dbNonces[0]).isLessThan(dbNonces[1])
+        assertThat(dbNonces[1]).isLessThan(dbNonces[2])
+
+        // Captured nonces (call order) must equal DB nonces (id order) — same ascending sequence
+        assertThat(capturedNonces).containsExactlyElementsOf(dbNonces)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // N9 — Crash-3b recovery: same nonce reused after signer failure
+    //
+    // Scenario: broadcastPending() assigns a nonce (committed to DB) then the signer
+    // throws before the tx is broadcast. On restart, broadcastPending() must reuse the
+    // existing nonce — NOT call NEXTVAL again — so the retried signed tx uses the same
+    // nonce as the one that may have leaked to the network.
+    //
+    // Produced via real code path: throwing signer in first call, real signer in second.
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @Order(9)
+    fun `N9 - crash-3b recovery — same nonce reused after signer failure`() {
+        setupExtraUser(uid = UID + 7, depositTransferId = 30L)
+        service.initiate(UID + 7, CURRENCY, AMOUNT, DEST, withdrawalId = 4000L)
+
+        // First broadcastPending(): signer throws after nonce is assigned in phase 1.
+        // The nonce must be committed to DB before sign() is called.
+        val throwingSigner = mock(WithdrawalSigner::class.java)
+        doThrow(RuntimeException("simulated MPC timeout"))
+            .`when`(throwingSigner).sign(anyLong(), anyString(), anyLong(), anyInt(), anyLong())
+        val serviceWithThrowingSigner = WithdrawalService(settlement, jdbc, throwingSigner)
+        serviceWithThrowingSigner.broadcastPending()
+
+        // Nonce must be persisted in DB despite signer failure, state remains LOCKED
+        val nonceAfterCrash = jdbc.queryForObject(
+            "SELECT nonce FROM withdrawals WHERE id = 4000", Long::class.java
+        )
+        assertThat(nonceAfterCrash).`as`("nonce must be committed before signer is called").isNotNull()
+        assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 4000", String::class.java))
+            .isEqualTo("LOCKED")
+
+        // Second broadcastPending() (restart recovery): normal signer, captures the nonce used
+        clearInvocations(signer)
+        service.broadcastPending()
+
+        val nonceCaptor = ArgumentCaptor.forClass(Long::class.java)
+        verify(signer, times(1)).sign(eq(4000L), anyString(), eq(AMOUNT), eq(CURRENCY), nonceCaptor.capture())
+
+        // THE KEY ASSERTION: the nonce passed to signer on retry is the SAME one committed in phase 1
+        assertThat(nonceCaptor.value)
+            .`as`("crash-3b: retry must reuse the committed nonce, not call NEXTVAL again")
+            .isEqualTo(nonceAfterCrash)
+
+        assertThat(jdbc.queryForObject("SELECT state FROM withdrawals WHERE id = 4000", String::class.java))
+            .isEqualTo("BROADCAST")
     }
 }
