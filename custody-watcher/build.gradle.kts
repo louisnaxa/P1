@@ -27,6 +27,7 @@ dependencies {
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.testcontainers:junit-jupiter")
+    implementation(project(":settlement"))
     testImplementation(project(":settlement"))
     testImplementation("com.tigerbeetle:tigerbeetle-java:0.16.11")
     testImplementation("org.assertj:assertj-core")

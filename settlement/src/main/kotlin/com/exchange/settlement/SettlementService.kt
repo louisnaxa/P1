@@ -144,6 +144,79 @@ class SettlementService(private val tb: Client) {
     }
 
     /**
+     * Reserve funds for a pending withdrawal.
+     * Creates a PENDING transfer: available(userId) → external(ledgerId).
+     * The debit lands in debits_pending (not debits_posted), so DEBITS_MUST_NOT_EXCEED_CREDITS
+     * still blocks a second debit — the funds are effectively locked.
+     * Throws if TB rejects for any reason other than Exists (e.g. ExceedsCredits = insufficient funds).
+     */
+    fun pendingWithdrawal(userId: Long, ledgerId: Int, amount: Long, transferId: Long) {
+        val batch = TransferBatch(1)
+        batch.add()
+        batch.setId(transferId)
+        batch.setDebitAccountId(AccountIds.available(userId, ledgerId))
+        batch.setCreditAccountId(AccountIds.external(ledgerId))
+        batch.setAmount(amount)
+        batch.setLedger(ledgerId)
+        batch.setCode(200)
+        batch.setFlags(TransferFlags.PENDING)
+        val errors = tb.createTransfers(batch)
+        if (errors.length > 0) {
+            while (errors.next()) {
+                val result = errors.getResult()
+                if (result != CreateTransferResult.Exists) {
+                    throw IllegalStateException("pendingWithdrawal rejected by TigerBeetle: $result")
+                }
+            }
+        }
+    }
+
+    /**
+     * Finalise a pending withdrawal: debits_pending → debits_posted on the user account.
+     * The resolving transfer ID is derived as pendingId or 1L (bit 0 distinguishes it from
+     * the pending transfer, whose ID always has bit 0 clear by construction).
+     * Idempotent: Exists is silently ignored.
+     */
+    fun postPendingWithdrawal(pendingId: Long) {
+        val batch = TransferBatch(1)
+        batch.add()
+        batch.setId(pendingId or 1L)
+        batch.setPendingId(pendingId)
+        batch.setFlags(TransferFlags.POST_PENDING_TRANSFER)
+        // debit_account_id, credit_account_id, ledger, code, amount = 0 → inherited from pending transfer
+        val errors = tb.createTransfers(batch)
+        if (errors.length > 0) {
+            while (errors.next()) {
+                if (errors.getResult() != CreateTransferResult.Exists) {
+                    log.error("postPendingWithdrawal failed pendingId={}: {}", pendingId, errors.getResult())
+                }
+            }
+        }
+    }
+
+    /**
+     * Reverse a pending withdrawal: release the locked funds back to available.
+     * Uses the same resolving ID formula as postPendingWithdrawal — post and void are
+     * mutually exclusive so they share the ID slot.
+     * Idempotent: Exists is silently ignored.
+     */
+    fun voidPendingWithdrawal(pendingId: Long) {
+        val batch = TransferBatch(1)
+        batch.add()
+        batch.setId(pendingId or 1L)
+        batch.setPendingId(pendingId)
+        batch.setFlags(TransferFlags.VOID_PENDING_TRANSFER)
+        val errors = tb.createTransfers(batch)
+        if (errors.length > 0) {
+            while (errors.next()) {
+                if (errors.getResult() != CreateTransferResult.Exists) {
+                    log.error("voidPendingWithdrawal failed pendingId={}: {}", pendingId, errors.getResult())
+                }
+            }
+        }
+    }
+
+    /**
      * Query the net balance of a user's available account.
      * Balance = credits_posted - debits_posted.
      */
@@ -156,6 +229,23 @@ class SettlementService(private val tb: Client) {
         if (results.length == 0) return 0
         results.next() // advance cursor from -1 to first element before reading
         return results.getCreditsPosted().toLong() - results.getDebitsPosted().toLong()
+    }
+
+    /**
+     * Spendable balance = credits_posted - debits_posted - debits_pending.
+     * Unlike getBalance(), this reflects funds that are locked in a PENDING withdrawal:
+     * they haven't been debited (posted) yet, but they cannot be spent again.
+     */
+    fun getSpendableBalance(userId: Long, ledgerId: Int): Long {
+        val ids = IdBatch(1)
+        ids.add()
+        ids.setId(AccountIds.available(userId, ledgerId), 0L)
+        val results = tb.lookupAccounts(ids)
+        if (results.length == 0) return 0
+        results.next()
+        return results.getCreditsPosted().toLong() -
+               results.getDebitsPosted().toLong() -
+               results.getDebitsPending().toLong()
     }
 
     /**
