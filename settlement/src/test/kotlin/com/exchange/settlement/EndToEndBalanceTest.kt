@@ -22,8 +22,20 @@ import org.springframework.context.ConfigurableApplicationContext
  *   (b) every per-account balance engine == TigerBeetle (via ReconciliationService)
  *   (c) no account carries a negative balance
  *
- * Session: 5 accounts, 6 trades, including a partial fill and three gap-2 accounts
- * (Alice, Eve, Bob have no prior "receive" account for the traded asset).
+ * Session: 5 accounts, 6 trades, including three gap-2 accounts (Alice, Eve, Bob have
+ * no prior "receive" account for the traded asset).
+ *
+ * Actual order-book trace (price-time priority drives the real matching):
+ *   T1  Alice BID 2@100 → Bob ASK 5@100 (partial: 3 remain)        price=100 qty=2
+ *   T2  Eve   BID 3@80  → Carol ASK 3@80 (full fill)               price=80  qty=3
+ *   T3  Dave  BID 1@90  → Bob's second ASK 1@90                    price=90  qty=1
+ *   T4  Carol BID 2@110 → Bob ASK 3@100 (best ask, not Dave's 110) price=100 qty=2
+ *           Bob's original ASK 5@100 now has 1 unit remaining.
+ *           Dave's ASK 2@110 remains resting — never matched in this session.
+ *   T5  Alice BID 1@95  → Carol ASK 1@95                           price=95  qty=1
+ *   T6  Eve   BID 3@100 → Bob's last 1@100; remaining Eve BID 2 rests price=100 qty=1
+ *
+ * Bob's original ASK 5@100 is fully consumed across T1(2) + T4(2) + T6(1) = 5 units.
  *
  * Architecture: real TigerBeetle (Testcontainer) + real MatchingEngineService.
  * Kafka is intentionally absent: the conservation property lives in the settlement
@@ -171,22 +183,24 @@ class EndToEndBalanceTest {
         // Dave ASK 2@110 — resting
         cmd(EngineCommand.placeOrder(SYMBOL_ID, DAVE,  0L, 110L, 2L, OrderSide.ASK))
 
-        // T4 — Carol BID 2@110: Carol switches from seller (T2) to buyer
-        //   Carol: QUOTE -220, BASE +2
-        //   Dave:  BASE  -2,  QUOTE +220
+        // T4 — Carol BID 2@110: price-time priority gives Bob ASK@100 (cheapest), not Dave@110.
+        //   Carol: QUOTE -200, BASE +2   (pays 100 per unit, not 110)
+        //   Bob:   BASE  -2,  QUOTE +200 (Bob's original ASK 5@100 now has 1 unit remaining)
+        //   Dave's ASK 2@110 remains resting — Carol's BID is already fully filled from Bob.
         cmd(EngineCommand.placeOrder(SYMBOL_ID, CAROL, 0L, 110L, 2L, OrderSide.BID))
 
         // Carol ASK 1@95 — resting
         cmd(EngineCommand.placeOrder(SYMBOL_ID, CAROL, 0L, 95L, 1L, OrderSide.ASK))
 
-        // T5 — Alice BID 1@95
+        // T5 — Alice BID 1@95 → Carol ASK@95
         //   Alice: QUOTE -95, BASE +1
-        //   Carol: BASE  -1,  QUOTE +95  (Carol sells again — T2 seller, T4 buyer, T5 seller)
+        //   Carol: BASE  -1,  QUOTE +95  (Carol: seller T2, buyer T4, seller T5)
         cmd(EngineCommand.placeOrder(SYMBOL_ID, ALICE, 0L, 95L, 1L, OrderSide.BID))
 
-        // T6 — Eve BID 3@100: fills the remaining 3 of Bob's original ASK 5@100
-        //   Eve:   QUOTE -300, BASE +3   ← partial fill completion
-        //   Bob:   BASE  -3,  QUOTE +300
+        // T6 — Eve BID 3@100: gets Bob's last 1 unit, then Eve BID 2@100 rests (Dave asks 110).
+        //   Eve:   QUOTE -100, BASE +1
+        //   Bob:   BASE  -1,  QUOTE +100  ← Bob's original ASK 5@100 fully consumed (T1+T4+T6=5)
+        //   Dave's ASK 2@110 and Eve's remaining BID 2@100 stay on the book — no match.
         cmd(EngineCommand.placeOrder(SYMBOL_ID, EVE,   0L, 100L, 3L, OrderSide.BID))
 
         // ── Signal replay complete ────────────────────────────────────────────
@@ -220,11 +234,11 @@ class EndToEndBalanceTest {
         assertThat(service.getBalance(ALICE, BASE_LEDGER)) .`as`("Alice BASE  0+2+1")         .isEqualTo(3L)
         assertThat(service.getBalance(BOB,   QUOTE_LEDGER)).`as`("Bob QUOTE   0+200+90+300")  .isEqualTo(590L)
         assertThat(service.getBalance(BOB,   BASE_LEDGER)) .`as`("Bob BASE    10-2-1-3")      .isEqualTo(4L)
-        assertThat(service.getBalance(CAROL, QUOTE_LEDGER)).`as`("Carol QUOTE 600+240-220+95").isEqualTo(715L)
+        assertThat(service.getBalance(CAROL, QUOTE_LEDGER)).`as`("Carol QUOTE 600+240-200+95") .isEqualTo(735L)  // T4 paid @100, not @110
         assertThat(service.getBalance(CAROL, BASE_LEDGER)) .`as`("Carol BASE  5-3+2-1")       .isEqualTo(3L)
-        assertThat(service.getBalance(DAVE,  QUOTE_LEDGER)).`as`("Dave QUOTE  400-90+220")    .isEqualTo(530L)
-        assertThat(service.getBalance(DAVE,  BASE_LEDGER)) .`as`("Dave BASE   3+1-2")         .isEqualTo(2L)
-        assertThat(service.getBalance(EVE,   QUOTE_LEDGER)).`as`("Eve QUOTE   600-240-300")   .isEqualTo(60L)
-        assertThat(service.getBalance(EVE,   BASE_LEDGER)) .`as`("Eve BASE    0+3+3")         .isEqualTo(6L)
+        assertThat(service.getBalance(DAVE,  QUOTE_LEDGER)).`as`("Dave QUOTE  400-90 (no sale)").isEqualTo(310L) // ASK 2@110 never matched
+        assertThat(service.getBalance(DAVE,  BASE_LEDGER)) .`as`("Dave BASE   3+1 (no sale)") .isEqualTo(4L)
+        assertThat(service.getBalance(EVE,   QUOTE_LEDGER)).`as`("Eve QUOTE   600-240-100")   .isEqualTo(260L)  // T6 got 1 unit only
+        assertThat(service.getBalance(EVE,   BASE_LEDGER)) .`as`("Eve BASE    0+3+1")         .isEqualTo(4L)
     }
 }
