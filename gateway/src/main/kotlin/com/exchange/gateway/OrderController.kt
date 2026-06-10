@@ -22,7 +22,8 @@ data class OrderResponse(val orderId: Long)
 @RequestMapping("/orders")
 class OrderController(
     private val publisher: CommandPublisher,
-    private val userService: UserService
+    private val userService: UserService,
+    private val transferGuard: TransferGuard
 ) {
 
     /**
@@ -33,6 +34,9 @@ class OrderController(
      * uid is resolved from Authentication.name (the JWT "sub" claim).
      * An unknown sub is rejected with 403 before the command reaches Kafka.
      *
+     * TransferGuard.checkOrderAccess is called BEFORE publish — before any durable write.
+     * A rejection throws ResponseStatusException(403) and no command enters the journal.
+     *
      * TD-5: no Idempotency-Key — a retried POST creates a second order.
      */
     @PostMapping
@@ -41,6 +45,7 @@ class OrderController(
         authentication: Authentication
     ): ResponseEntity<OrderResponse> {
         val uid = userService.resolveUid(authentication.name)
+        transferGuard.checkOrderAccess(uid, req.symbolId)
         val cmd = EngineCommand(
             type = EngineCommand.PLACE_ORDER,
             uid = uid,

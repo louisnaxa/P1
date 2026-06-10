@@ -45,6 +45,9 @@ class RateLimitTest {
     private lateinit var userService: UserService
 
     @MockBean
+    private lateinit var transferGuard: TransferGuard
+
+    @MockBean
     private lateinit var jwtDecoder: JwtDecoder
 
     private val orderJson = """{"symbolId":1,"side":"BID","price":100,"quantity":5}"""

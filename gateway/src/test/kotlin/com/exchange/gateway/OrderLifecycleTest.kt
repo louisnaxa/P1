@@ -59,6 +59,9 @@ class OrderLifecycleTest {
     private lateinit var userService: UserService
 
     @MockBean
+    private lateinit var transferGuard: TransferGuard
+
+    @MockBean
     private lateinit var jwtDecoder: JwtDecoder
 
     // Prevent these listeners from subscribing to topics not created by @EmbeddedKafka

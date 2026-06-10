@@ -31,9 +31,29 @@ dependencies {
     testImplementation("org.postgresql:postgresql")
 }
 
-// Fast unit tests: exclude @Tag("integration") so Docker is never required locally or in the build job.
+// Fast unit tests: exclude @Tag("integration") and @Tag("transfer") so Docker is never required
+// locally or in the build job.
 tasks.test {
-    useJUnitPlatform { excludeTags("integration") }
+    useJUnitPlatform { excludeTags("integration", "transfer") }
+}
+
+// Transfer-guard integration tests: real PostgreSQL via Testcontainers.
+// Run: ./gradlew :gateway:transferTest
+tasks.register<Test>("transferTest") {
+    description = "Runs @Tag(\"transfer\") TransferGuard integration tests against real PostgreSQL."
+    group = "verification"
+    useJUnitPlatform { includeTags("transfer") }
+    jvmArgs(tasks.test.get().jvmArgs ?: emptyList<String>())
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    environment("DOCKER_HOST", System.getenv("DOCKER_HOST") ?: "unix:///var/run/docker.sock")
+    testLogging {
+        events("passed", "failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
 }
 
 // Account-status integration tests: real PostgreSQL via Testcontainers.
