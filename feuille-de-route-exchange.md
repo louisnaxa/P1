@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 9 juin 2026 :** M0, M1, M2 et **M3 franchis et prouvés** (CI verte). Jalon courant : **phase produit tokenisation (brique 1 : statut)**. M4 socle custody prouvé ; M4-MPC et M5 repoussés après le cœur produit.
+> **État au 10 juin 2026 :** M0–M4 socle et **brique B1 (statut des détenteurs) franchis et prouvés** (CI verte). Jalon courant : **brique B2 — gestion par bien**.
 
 ---
 
@@ -18,7 +18,7 @@ Le noyau exchange (M0–M4) est la fondation d'une infrastructure d'échange pou
 
 Ordre de construction décidé. Aucune case cochée : rien n'est encore prouvé.
 
-- [ ] **Brique 1 — Statut des détenteurs** *(money-path, rigueur maximale, tests de refus)*
+- [x] **Brique 1 — Statut des détenteurs** *(money-path)* — prouvé en CI : modèle Postgres (UNVERIFIED/FOREIGN_SPECULATIVE/CITIZEN_APPROVED/SUSPENDED + juridiction + audit trail), contraintes CHECK rejetant les cas invalides prouvées par bypass du guard applicatif (`AccountStatusIntegrationTest`, job `status`)
 - [ ] **Brique 2 — Gestion par bien**
 - [ ] **Brique 3 — Contrôle au transfert** *(money-path, rigueur maximale, tests de refus)*
 - [ ] **Brique 4 — Droits économiques** (distribution loyers / seuil 100 %)
