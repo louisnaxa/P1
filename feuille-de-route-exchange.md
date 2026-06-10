@@ -4,13 +4,26 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 9 juin 2026 :** M0, M1, M2 et **M3 franchis et prouvés** (CI verte). Jalon courant : **M4**. Dépôt + retrait (verrou/état/nonce) prouvés en CI ; signature/diffusion MPC réelle + confirmations on-chain + résolution trou de nonce restent à valider en environnement MPC (TD-13).
+> **État au 9 juin 2026 :** M0, M1, M2 et **M3 franchis et prouvés** (CI verte). Jalon courant : **phase produit tokenisation (brique 1 : statut)**. M4 socle custody prouvé ; M4-MPC et M5 repoussés après le cœur produit.
 
 ---
 
 ## Virage produit
 
-Le noyau exchange (M0–M4) est la fondation d'une plateforme de tokenisation immobilière, pas le produit final. Phase produit en cours de cadrage, ordre de construction : statut des détenteurs → gestion par bien → contrôle au transfert → distribution loyers / seuil 100 %. Le détail sera inscrit brique par brique à mesure qu'elles sont cadrées et prouvées. M4 signature/diffusion MPC et M5 (front React) sont repoussés APRÈS le cœur tokenisation — décision : construire d'abord le levier démontrable. Niveau de rigueur : statut + contrôle au transfert = money-path (rigueur maximale, tests de refus) ; le reste = niveau preuve de concept.
+Le noyau exchange (M0–M4) est la fondation d'une infrastructure d'échange pour un parc immobilier réel et localisé — Abu Dhabi au départ. Stratégie actée : base régulée unique, deux classes de détenteurs (résident agréé / étranger sans droit économique). M4 signature/diffusion MPC et M5 (front React) sont repoussés APRÈS le cœur tokenisation — décision : construire d'abord le levier démontrable. Voir `SPEC-PRODUIT.md` pour le détail du cadrage produit.
+
+---
+
+## Phase produit — briques
+
+Ordre de construction décidé. Aucune case cochée : rien n'est encore prouvé.
+
+- [ ] **Brique 1 — Statut des détenteurs** *(money-path, rigueur maximale, tests de refus)*
+- [ ] **Brique 2 — Gestion par bien**
+- [ ] **Brique 3 — Contrôle au transfert** *(money-path, rigueur maximale, tests de refus)*
+- [ ] **Brique 4 — Droits économiques** (distribution loyers / seuil 100 %)
+
+Voir `CARTE-BRIQUES-PRODUIT.md` pour la carte détaillée.
 
 ---
 
@@ -134,7 +147,7 @@ Dettes inscrites (voir `TECH_DEBT.md`) : full-replay depuis offset 0 (→ snapsh
 Ce qui est prouvé en CI :
 - [x] Dépôt : idempotence layer-1 (Postgres UNIQUE `tx_hash+log_index`) + layer-2 (SHA-256 transferId TB) — `AdjustBalanceIdempotencyTest` D1+D2
 - [x] Retrait verrou + machine d'état (LOCKED→BROADCAST→CONFIRMED|VOID) — `WithdrawalChaosTest` W1–W7
-- [x] Retrait nonce : réservation durable avant sign(), ordre ASC obligatoire, reprise crash-3b — W8–N9
+- [x] Retrait nonce : réservation durable avant sign(), ordre ASC obligatoire, reprise crash-3b — N8–N9
 
 Ce qui reste (hors CI — intégration MPC + audit, voir TD-13) :
 - [ ] Signature/diffusion MPC réelle (`WithdrawalSigner` production, `raw_tx` on-chain)
