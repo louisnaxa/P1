@@ -4,11 +4,13 @@ import com.exchange.common.OrderSide
 import com.exchange.common.TradeEvent
 import com.tigerbeetle.Client
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DriverManagerDataSource
 import org.testcontainers.containers.PostgreSQLContainer
@@ -42,6 +44,7 @@ class PropertyIntegrationTest {
         const val LEDGER_P2 = 2002;  const val SYM_P2 = 2002
         const val LEDGER_P3 = 2003;  const val SYM_P3 = 2003
         const val LEDGER_P4 = 2004;  const val SYM_P4 = 2004
+        const val LEDGER_P5 = 2005;  const val SYM_P5 = 2005
 
         const val BUYER_UID = 9001L
         const val USER_P3   = 9002L
@@ -269,6 +272,53 @@ class PropertyIntegrationTest {
         val tbBalance = settlementService.getBalance(AccountIds.SYSTEM_PROPERTY_OWNER_USER, LEDGER_P3)
         assertThat(fresh).`as`("fresh snapshot = totalTokens - saleQty").isEqualTo(totalTokens - saleQty)
         assertThat(fresh).`as`("fresh snapshot = TB balance").isEqualTo(tbBalance)
+    }
+
+    // ── P5 — Double-creation idempotence (B7 proof) ───────────────────────
+
+    /**
+     * Proves that re-delivering the same CREATE_PROPERTY command (same property_ledger_id)
+     * does NOT double-emit tokens.
+     *
+     * Mechanism:
+     *   1st call : DB INSERT succeeds, TB emission transfer fires — balance = totalTokens.
+     *   2nd call : DB INSERT fails with DataIntegrityViolationException (UNIQUE on
+     *              property_ledger_id) — TB deposit is never reached, so no second emission.
+     *
+     * PropertyCommandConsumer catches DataIntegrityViolationException and acks (re-delivery
+     * treated as already-processed). The TB balance invariant is preserved.
+     */
+    @Test
+    fun `P5 double createProperty on same ledger - DB uniqueness prevents double token emission`() {
+        val totalTokens = 200_000L
+
+        // First creation: succeeds, tokens emitted
+        propertyService.createProperty(
+            name = "Idempotence Tower",
+            jurisdiction = "AE-AZ",
+            propertyLedgerId = LEDGER_P5,
+            quoteLedgerId = STABLECOIN_LEDGER,
+            symbolId = SYM_P5,
+            totalTokens = totalTokens
+        )
+        val balanceAfterFirst = settlementService.getBalance(AccountIds.SYSTEM_PROPERTY_OWNER_USER, LEDGER_P5)
+        assertThat(balanceAfterFirst).`as`("balance after first creation = totalTokens").isEqualTo(totalTokens)
+
+        // Second creation (re-delivery simulation): DB UNIQUE constraint fires
+        assertThatThrownBy {
+            propertyService.createProperty(
+                name = "Idempotence Tower",
+                jurisdiction = "AE-AZ",
+                propertyLedgerId = LEDGER_P5,
+                quoteLedgerId = STABLECOIN_LEDGER,
+                symbolId = SYM_P5,
+                totalTokens = totalTokens
+            )
+        }.isInstanceOf(DataIntegrityViolationException::class.java)
+
+        // TB balance is unchanged: no double emission
+        val balanceAfterSecond = settlementService.getBalance(AccountIds.SYSTEM_PROPERTY_OWNER_USER, LEDGER_P5)
+        assertThat(balanceAfterSecond).`as`("balance after re-delivery = still totalTokens").isEqualTo(totalTokens)
     }
 
     // ── P4 — Jurisdiction link ────────────────────────────────────────────

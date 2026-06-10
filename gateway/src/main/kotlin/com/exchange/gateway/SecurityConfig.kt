@@ -32,6 +32,9 @@ class SecurityConfig(
                 // Admin credit is the highest-risk endpoint: requires a dedicated admin role.
                 // A valid user JWT without exchange-admin does NOT grant access (403, not 401).
                 auth.requestMatchers("/admin/credit", "/admin/account-status").hasRole("exchange-admin")
+                // Property creation: requires subsidiary role (filiale) or admin.
+                // Jurisdiction coherence (JWT claim ↔ body) is further enforced in PropertyController.
+                auth.requestMatchers(HttpMethod.POST, "/properties").hasAnyRole("subsidiary", "exchange-admin")
                 // Everything else (POST /orders, DELETE /orders/**) requires authentication.
                 auth.anyRequest().authenticated()
             }
