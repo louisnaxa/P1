@@ -71,11 +71,13 @@ n'est pas encore démontrable par un tiers — il manque le marché, les prix, l
 Ce qui transforme le cœur de contrôle en produit qu'un tiers peut voir et manipuler.
 Ordre indicatif ; chaque brique cadrée juste avant d'être codée.
 
-### Brique 4 — Droits économiques (money-path)
-- **Loyers** : aux CITIZEN_APPROVED uniquement, au prorata entre agréés (compaction : plus
-  d'étrangers → rendement agréé ↑). DÉPEND de TD-15 résolue (property_holders doit être fiable
-  avant de distribuer de l'argent réel depuis cette table).
-- **Seuil 100 %** : détecter qu'un agréé atteint 100 % des tokens d'un bien → droit d'acquisition.
+### Brique 4 — Droits économiques (loyers)  ✅ PROUVÉE
+Loyers aux CITIZEN_APPROVED au prorata entre agréés (compaction). Lit TB en direct — pas
+`property_holders` (TD-15 non bloquante ici). Reste non divisible → reste dans le pool.
+Idempotence : `distributionKey` par distribution → mêmes TB transferIds → TB Exists sur retry.
+**Preuve** : L1 (montant exact), L2 (étranger=0), L3 (mauvaise juridiction=0, défense en profondeur),
+L4 (conservation), L5 (idempotence), L6 (reste), job `rent`. TD-16 : bornes rentTransferId inscrites.
+**Seuil 100 % → droit d'acquisition** : reporté à B6 (dépend du buy-out TWAP pour avoir le prix réel).
 **Dépend de** : phase 1 complète.
 
 ### Brique 5 — Marché primaire / prévente (money-path)  ⚠ DRAPEAU JURIDIQUE
