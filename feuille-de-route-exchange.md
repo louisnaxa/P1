@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 10 juin 2026 :** M0–M4 socle, **briques B1–B4 franchies et prouvées** (CI verte). Phase 1 (cœur de contrôle) complète. Jalon courant : **phase 2 — produit démontrable**.
+> **État au 10 juin 2026 :** M0–M4 socle, **briques B1–B4 et B7 franchies et prouvées** (CI verte). Phase 1 (cœur de contrôle) complète. Phase 2 en cours. Jalon courant : **B5/B6/B8/B9 — produit démontrable**.
 
 ---
 
@@ -22,6 +22,8 @@ Ordre de construction décidé. Aucune case cochée : rien n'est encore prouvé.
 - [x] **Brique 2 — Gestion par bien** *(money-path)* — prouvé en CI : tables `properties`/`symbols`/`property_holders`, `SymbolRepository` remplace le TODO hardcodé, `PropertyService` émet 100% des tokens sur création (TB réel), 4 tests P1–P4 (`PropertyIntegrationTest`, job `property`)
 - [x] **Brique 3 — Contrôle au transfert** *(money-path)* — prouvé en CI : `TransferGuard` (statut × juridiction du bien), R1–R6 contre real PostgreSQL (`TransferGuardIntegrationTest`, job `transfer`), R7 câblage wiring (`TransferGuardWiringTest`, job `build`) ; inventaire : `PLACE_ORDER` seul chemin gardé, `CANCEL_ORDER` et `ADJUST_BALANCE` hors périmètre par construction
 - [x] **Brique 4 — Droits économiques** *(money-path)* — prouvé en CI : `RentService.distributeRent` lit TB en direct (pas `property_holders`), compaction, reste dans pool, idempotence sur `distributionKey`, L1–L6 (`RentDistributionTest`, job `rent`). TD-16 inscrite. Seuil 100 % (acquisition) reporté à B6 (buy-out TWAP).
+
+- [x] **Brique 7 — API filiale : création de biens + présentation** — prouvé en CI : `POST /properties` gateway (money-path) : contrôle rôle `subsidiary`/`exchange-admin` au filtre Spring Security + cohérence `subsidiary_jurisdiction` JWT↔body (pattern uid-from-token B3) + validations bornes avant publication → 403/400 si refus, RIEN publié (prouvé par `verify(publisher, never())`). `PropertyCommandConsumer` settlement : intégrité DB uniquement, idempotence re-livraison (UNIQUE `property_ledger_id` → `DataIntegrityViolationException` → ack). `GET /properties/{id}` lecture Postgres (habillage). `PropertyApiWiringTest` PA1–PA5 (job `build`), `PropertyIntegrationTest` P5 idempotence (job `property`). Seul chemin production : gateway gardé → `property_commands` → `PropertyCommandConsumer` → `PropertyService.createProperty()`.
 
 Voir `CARTE-BRIQUES-PRODUIT.md` pour la carte détaillée.
 

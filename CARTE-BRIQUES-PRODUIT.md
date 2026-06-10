@@ -95,11 +95,17 @@ possibilité de rachat total (buy-out). Différenciateur majeur.
 **À détailler par le porteur produit avant cadrage** — calcul exact du TWAP, déclenchement et
 exécution du buy-out (mouvements tokens + stablecoin). Money-path strict.
 
-### Brique 7 — API filiale : création de biens + présentation
-- **Création de tokens pour un bien** (money-path) : exposition propre en API de ce que B2 a posé
-  (`createProperty`), pour que les filiales émettent des biens.
-- **Présentation** (habillage) : métadonnées du bien (description, localisation, photos, documents).
-  Preuve de concept suffit.
+### Brique 7 — API filiale : création de biens + présentation  ✅ PROUVÉE
+- **Création de tokens pour un bien** (money-path) : `POST /properties` gateway — rôle `subsidiary`
+  ou `exchange-admin` (filtre Spring Security) + `subsidiary_jurisdiction` JWT↔body (pattern
+  uid-from-token de B3) + validations bornes → 403/400 si refus, RIEN publié. Publié sur
+  `property_commands` → `PropertyCommandConsumer` → `PropertyService.createProperty()`.
+  Seul chemin production : gateway gardé → topic → consumer. Aucune porte dérobée.
+- **Présentation** (habillage) : `GET /properties/{propertyLedgerId}` lit Postgres. `property_metadata`
+  table séparée, jamais lue par settlement/engine.
+**Preuve** : `PropertyApiWiringTest` PA1–PA5 (`verify(publisher, never())` prouve l'absence de
+publication sur refus), `PropertyIntegrationTest` P5 (idempotence re-livraison → DB UNIQUE →
+pas de double émission), jobs `build` + `property`.
 
 ### Brique 8 — Portefeuilles utilisateurs (lecture, preuve de concept)
 Modèle « façon Binance » : l'utilisateur dépose du stablecoin → solde virtuel dans le système →
