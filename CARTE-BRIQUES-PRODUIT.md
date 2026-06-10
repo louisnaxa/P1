@@ -3,7 +3,7 @@
 > Vue de navigation, PAS spécification détaillée. Donne le « quoi » et l'ordre de dépendance,
 > pas le « comment ». Chaque brique se spécifie en détail juste avant d'être codée (cadrage
 > ancré dans le code réel), se code, se prouve, puis devient la fondation de la suivante.
-> À inscrire dans le repo une fois validée. Mise à jour à chaque brique franchie.
+> Mise à jour à chaque brique franchie.
 
 ---
 
@@ -11,18 +11,18 @@
 
 Deux strates qu'on ne mélange jamais :
 
-- **Infrastructure** (M0–M4) : settlement, custody, sécurité. Fondation stable, déjà prouvée
-  jusqu'au retrait. Ne se refait pas — s'étend.
-- **Produit tokenisation** : ce qui crée la valeur réelle (biens, statuts, droits différenciés).
-  Se construit PAR-DESSUS l'infrastructure, brique par brique.
+- **Infrastructure** (M0–M4) : settlement, custody, sécurité. Fondation stable, prouvée jusqu'au
+  retrait (custody dépôt + retrait verrou/état/nonce). Ne se refait pas — s'étend.
+- **Produit tokenisation** : ce qui crée la valeur réelle (biens, statuts, droits, marché). Se
+  construit PAR-DESSUS l'infrastructure, brique par brique.
 
 Règle de rigueur (vaut pour toute la phase) :
-- **Money-path** (flux d'argent, contrôle d'accès aux fonds, droits économiques) = rigueur maximale,
-  tests réels, on prouve le REFUS autant que le passage.
-- **Habillage** (UI, confort, cas rares) = niveau preuve de concept, on va vite.
+- **Money-path** (flux d'argent, contrôle d'accès aux fonds, droits économiques, prix, émission) =
+  rigueur maximale, tests réels contre vraie infra, on prouve le REFUS autant que le passage.
+- **Habillage** (UI, lecture, présentation, confort) = niveau preuve de concept, on va vite.
 
-Objectif stratégique : construire le **levier démontrable** au plus vite (un cœur qui prouve la
-disruption), pas le produit final exhaustif. La validation juridique du montage et le choix du
+Objectif stratégique : construire un produit **démontrable** (qu'un régulateur/investisseur peut voir
+et manipuler), pas le produit final exhaustif. La validation juridique du montage et le choix du
 prestataire MPC restent les vrais chemins critiques, hors de cette carte technique.
 
 ---
@@ -33,115 +33,113 @@ Un carnet d'ordres commun où deux classes de détenteurs échangent des fractio
 immobiliers réels : des **étrangers spéculatifs** (sans droit aux loyers ni à l'acquisition —
 pure exposition au prix, fournissent la liquidité) et des **citoyens agréés** d'une juridiction
 (droit aux loyers sur les biens de leur juridiction, droit d'acquérir le bien à 100 % des tokens).
-Les citoyens accèdent via l'API d'une filiale régulée (point de contrôle) ; les étrangers
-accèdent en direct à l'exchange offshore.
+Les citoyens accèdent via l'API d'une filiale régulée (point de contrôle) ; les étrangers en direct.
+Stratégie : base régulée unique (Abu Dhabi/ADGM), parc immobilier réel et localisé.
 
 ---
 
-## Les briques, dans l'ordre de dépendance
+# PHASE 1 — Le cœur de contrôle  ✅ FRANCHIE ET PROUVÉE
 
-Chaque brique présuppose la précédente. On les fait une à une, finie-prouvée avant la suivante.
+Les trois briques fondatrices. Toutes prouvées en CI contre vrai PostgreSQL + vrai TigerBeetle.
 
-### Brique 1 — Statut des détenteurs  ✅ FRANCHIE ET PROUVÉE (CI verte, job status)
+### Brique 1 — Statut des détenteurs  ✅ PROUVÉE
+Chaque compte porte un statut (`UNVERIFIED` / `FOREIGN_SPECULATIVE` / `CITIZEN_APPROVED` /
+`SUSPENDED`), une juridiction (agréés seulement), une trace d'audit. Dans Postgres, lu au contrôle,
+jamais dans l'accountId TB ni le journal Kafka (mutable → casserait l'idempotence).
+**Preuve** : AccountStatusIntegrationTest (vrai PostgreSQL, tests de rejet des contraintes CHECK), job `status`.
 
-**Quoi** : chaque compte porte un statut (`UNVERIFIED` → `FOREIGN_SPECULATIVE` /
-`CITIZEN_APPROVED` → `SUSPENDED`), une juridiction (pour les agréés seulement), et une trace
-d'audit (quand/qui a changé le statut).
+### Brique 2 — Gestion par bien  ✅ PROUVÉE
+Chaque bien = un actif distinct (ledger TB), nombre fixe de tokens, cap table, juridiction attachée.
+Tables `properties`, `symbols`, `property_holders`. Émission : 100 % au compte propriétaire dédié
+(SYSTEM_PROPERTY_OWNER_USER). Stablecoin = ledger partagé unique. TB fait foi ; property_holders est
+une projection (voir TD-15). Limite ledgerId 24 bits = 16,7M biens (TD-14).
+**Preuve** : tests P1–P4 (émission, conservation, fidélité projection, juridiction), job `property`.
 
-**Dépend de** : l'identité non falsifiable de M3 (table `users`, uid résolu depuis le token). On étend, on ne refait pas.
+### Brique 3 — Contrôle au transfert  ✅ PROUVÉE
+`TransferGuard` refuse/autorise selon statut × juridiction du bien, AVANT publication Kafka.
+UNVERIFIED/SUSPENDED → rejet ; FOREIGN_SPECULATIVE → autorisé partout ; CITIZEN_APPROVED(J) →
+autorisé sur biens de J seulement. Fail-closed : symbole inconnu ou non qualifiable → rejet.
+**Preuve** : R1–R6 (vrai PostgreSQL) + R7 (guard prouvé câblé dans placeOrder), job `transfer`.
 
-**Où vit la donnée** : Postgres (table `users`). JAMAIS dans l'accountId TigerBeetle ni dans le
-journal Kafka — le statut est mutable, ça casserait l'idempotence. Lu au moment du contrôle.
-
-**Rigueur** : money-path (le statut conditionne l'accès aux fonds).
-
-**Décidé** : KYC ultra-léger pour le spéculatif (exclusion US + AML de base), frictionless pour
-préserver la liquidité internationale.
-
-**Ce lot ne fait PAS** : le contrôle au transfert (c'est la brique 3). Il pose seulement le
-modèle, la lecture, et la transition de statut.
-
-### Brique 2 — Gestion par bien  ✅ FRANCHIE ET PROUVÉE (CI verte, job property)
-
-**Quoi** : chaque bien immobilier devient un actif distinct dans le registre, avec un nombre fixe
-de tokens et une cap table (qui détient quelle fraction). Une juridiction est attachée à chaque bien.
-
-**Dépend de** : le modèle de comptes/ledger TigerBeetle existant.
-
-**Rigueur** : money-path (la cap table par bien est de la propriété d'actifs).
-
-**Décidé et prouvé** :
-- Un bien = un ledger TigerBeetle dédié (`property_ledger_id`, 24 bits, voir TD-14).
-- `symbols` table : fait correspondre un symbolId exchange-core à `(base_ledger, quote_ledger)`.
-  Remplace le hardcode `baseLedger=10/quoteLedger=11` dans `TradeConsumer`.
-- `property_holders` : projection de TB (reconstructible), mise à jour par `syncHolder` après trade.
-- Émission initiale : 100% des tokens crédités sur `SYSTEM_PROPERTY_OWNER_USER` via `deposit(external→owner)`.
-- Les tokens se tradent contre le stablecoin (ledger partagé, unique pour toutes les paires).
-
-### Brique 3 — Contrôle au transfert  ✅ FRANCHIE ET PROUVÉE (CI verte, jobs build + transfer)
-
-**Quoi** : refuser ou autoriser un transfert selon le statut du détenteur ET la juridiction du
-bien. Un étranger ne peut pas recevoir un droit réservé aux citoyens ; un citoyen ne peut toucher
-que les biens de sa juridiction ; un compte SUSPENDED/UNVERIFIED est bloqué.
-
-**Dépend de** : brique 1 (statut) + brique 2 (biens et leur juridiction). C'est la combinaison des deux.
-
-**Où s'applique le contrôle** : AVANT que l'événement devienne durable — gateway avant publication
-Kafka pour les ordres, service avant la première écriture TB pour les retraits. JAMAIS dans le
-consumer/engine (qui rejouent le journal et casseraient l'idempotence). Principe identique à
-« valider l'offset après l'écriture durable » du CLAUDE.md.
-
-**Rigueur** : money-path maximal. C'est LE cœur démontrable — on prouve le refus dans chaque cas.
-
-**Décidé et prouvé** :
-- `TransferGuard` service séparé, injecté dans `OrderController` — garde appelé AVANT `publisher.publish()`.
-- Règles R1–R6 prouvées contre real PostgreSQL (`TransferGuardIntegrationTest`, job `transfer`) :
-  - R1 UNVERIFIED → refus ; R2 SUSPENDED → refus
-  - R3 FOREIGN_SPECULATIVE → passage pour tout symbole (même inconnu, retour rapide)
-  - R4 CITIZEN_APPROVED(J) × bien(J) → passage ; R5 CITIZEN_APPROVED(J) × bien(J') → refus
-  - R6 symbole inconnu → refus (fail-closed : symbole non qualifiable = refus, jamais passage)
-- R7 câblage wiring (`TransferGuardWiringTest`, job `build`) : guard rejection propagée en 403.
-- Inventaire des chemins : `PLACE_ORDER` est le seul chemin gardé. `CANCEL_ORDER` hors périmètre
-  (libère un verrou posé après avoir passé le garde — pas un nouveau transfert). `ADJUST_BALANCE`
-  hors périmètre (admin-only, `ROLE_admin`).
-- Retrait stablecoin : reporté (hors B3, porte distincte non encore franchie).
-
-**Levier démontrable atteint** : un carnet commun où deux classes tradent des fractions de biens
-réels avec des droits différenciés, vérifiés, infalsifiables.
-
-### Brique 4 — Droits économiques (loyers + seuil 100 %)
-
-**Quoi** :
-- **Loyers** : versés uniquement aux détenteurs agréés, au prorata de leur part ENTRE AGRÉÉS
-  (pas de la part totale). Mécanique de « compaction » : plus les étrangers détiennent, plus le
-  rendement par token des agréés monte.
-- **Seuil 100 %** : détecter qu'un détenteur agréé atteint 100 % des tokens d'un bien et
-  déclencher son droit contractuel d'acquisition.
-
-**Dépend de** : les trois briques précédentes (statut, biens, contrôle).
-
-**Rigueur** : money-path (distribution d'argent réel + déclenchement d'un droit).
-
-**Note** : moins urgent pour démontrer le potentiel — peut venir après que le cœur (1+2+3) tourne.
+**◄ À la fin de la phase 1 : le cœur de contrôle existe.** Le moteur fait la bonne chose. Mais ce
+n'est pas encore démontrable par un tiers — il manque le marché, les prix, l'accès, l'interface.
 
 ---
 
-## Ce qui N'EST PAS dans cette carte (volontairement)
+# PHASE 2 — Le produit démontrable
 
-- Le front / l'UI : habillage, niveau preuve de concept, après le cœur.
-- M4 signature/diffusion MPC : repoussé jusqu'au choix du prestataire (dépend de la juridiction régulée).
-- La structure juridique des biens (SPV, etc.) : à clarifier avec un avocat — conditionne la brique 2.
-- La validation juridique du montage token : chemin critique hors-code, prime sur tout déploiement réel.
+Ce qui transforme le cœur de contrôle en produit qu'un tiers peut voir et manipuler.
+Ordre indicatif ; chaque brique cadrée juste avant d'être codée.
+
+### Brique 4 — Droits économiques (money-path)
+- **Loyers** : aux CITIZEN_APPROVED uniquement, au prorata entre agréés (compaction : plus
+  d'étrangers → rendement agréé ↑). DÉPEND de TD-15 résolue (property_holders doit être fiable
+  avant de distribuer de l'argent réel depuis cette table).
+- **Seuil 100 %** : détecter qu'un agréé atteint 100 % des tokens d'un bien → droit d'acquisition.
+**Dépend de** : phase 1 complète.
+
+### Brique 5 — Marché primaire / prévente (money-path)  ⚠ DRAPEAU JURIDIQUE
+Mécanique d'émission et de distribution initiale des tokens d'un bien (du compte propriétaire vers
+les souscripteurs).
+**Mécanique** (neutre) : peut être cadrée et construite — comment un bien passe de « créé » à
+« tokens distribuables », souscription, attribution.
+**Adressage** (NON neutre) : QUI peut souscrire et COMMENT on collecte les fonds du public reste
+conditionné à la clarification réglementaire (ADGM). La mécanique se construit ; le ciblage de
+collecte s'active sous cadre régulé. Ne pas opérer une collecte publique non autorisée.
+
+### Brique 6 — Rachat par buy-out sur prix TWAP (money-path)
+Le mécanisme qui donne le « vrai prix » du bien : prix de marché continu (TWAP), ancré par la
+possibilité de rachat total (buy-out). Différenciateur majeur.
+**À détailler par le porteur produit avant cadrage** — calcul exact du TWAP, déclenchement et
+exécution du buy-out (mouvements tokens + stablecoin). Money-path strict.
+
+### Brique 7 — API filiale : création de biens + présentation
+- **Création de tokens pour un bien** (money-path) : exposition propre en API de ce que B2 a posé
+  (`createProperty`), pour que les filiales émettent des biens.
+- **Présentation** (habillage) : métadonnées du bien (description, localisation, photos, documents).
+  Preuve de concept suffit.
+
+### Brique 8 — Portefeuilles utilisateurs (lecture, preuve de concept)
+Modèle « façon Binance » : l'utilisateur dépose du stablecoin → solde virtuel dans le système →
+le portefeuille AFFICHE ce qu'il détient (stablecoin + fractions de biens). C'est de la LECTURE des
+soldes TigerBeetle, pas de la custody. La custody réelle des fonds (clés MPC) reste séparée (M4-MPC,
+bloquée sur le choix prestataire).
+
+### Brique 9 — Front-end minimum viable (habillage)
+Interface qui rend tout le reste visible et manipulable : liste des biens, passage d'ordres, carnet,
+portefeuille, prix. Vient EN DERNIER — s'appuie sur toutes les briques précédentes. Preuve de
+concept : suffisant pour démontrer, pas durci pour le grand public.
+
+**◄ À la fin de la phase 2 : le produit est démontrable.** Un tiers peut voir un parc de biens,
+des prix réels, passer des ordres selon son statut, voir son portefeuille. C'est le vrai levier.
 
 ---
 
-## Comment on avance (rappel de méthode)
+## Hors de cette carte (dépendances externes, pas du code à cadrer ici)
 
-1. Pour chaque brique : cadrage juste-à-temps (l'agent localise le code réel, on décide
-   l'architecture, on borne) → code → preuve en CI → on inscrit la brique comme franchie.
-2. On ne spécifie PAS les briques futures en détail à l'avance (hypothèses non validées = fiction).
-   Cette carte donne le cap ; le détail vient au moment de coder, ancré dans le code réel.
+- **M4 signature/diffusion MPC** : custody réelle des fonds. Bloquée sur le choix du prestataire MPC
+  (lié au régime juridique). Sans elle, dépôt/retrait stablecoin restent en intégration, pas en prod.
+- **Retrait stablecoin — contrôle de statut** : reporté de B3, cadrage dédié avec lecture custody-watcher.
+- **Dossier régulateur ADGM** : qualification du token, périmètre de licence, non-sollicitation,
+  adaptations fiscales. LE vrai chemin critique. À avancer en parallèle du code, délai le plus long.
+- **Validation juridique de la prévente** : conditionne l'adressage de la brique 5.
+
+---
+
+## Dettes liées au produit (voir TECH_DEBT.md)
+- **TD-14** : limite ledgerId 24 bits (16,7M biens) — non bloquante.
+- **TD-15** : property_holders diverge de TB dès le 1er trade. DOIT être résolue AVANT que la brique 4
+  distribue des loyers depuis cette table. Remédiations écrites : syncHolder avant ack + reconstruction.
+
+---
+
+## Comment on avance (méthode, inchangée)
+
+1. Pour chaque brique : cadrage juste-à-temps (l'agent localise le code réel, inventaire des chemins
+   touchés, on décide l'architecture, on borne) → code → preuve en CI → on inscrit comme franchie.
+2. On ne spécifie pas les briques futures en détail à l'avance (hypothèses = fiction). La carte donne
+   le cap ; le détail vient au moment de coder.
 3. Une brique à la fois. Finie et prouvée avant la suivante.
-4. Money-path : rigueur maximale, prouver le refus. Reste : preuve de concept, vite.# Carte des briques produit — Tokenisation immobilière
-
-Fichier réservé. Contenu à venir.
+4. Money-path : rigueur maximale, prouver le refus, vraie infra. Reste : preuve de concept, vite.
+5. Cadrage : toujours exiger l'inventaire des chemins existants touchés + le test qui échoue si
+   l'invariant est violé (leçon B2 : un défaut vit à la frontière entre le neuf et l'ancien).

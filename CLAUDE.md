@@ -126,3 +126,6 @@ Règle :
 - Si le problème n'est pas reproduit après **deux essais**, s'arrêter et signaler le constat
   factuel (observé vs attendu) au lieu de continuer à chercher.
 - Un soupçon n'est pas un bug : ne pas corriger un comportement qu'aucun test ne met en défaut.
+
+
+Leçon (9 juin) — ne jamais modifier la config de production pour faire passer un test local. L'agent a violé P-1 après un compactage (tests Testcontainers lancés en local macOS) ET modifié les build.gradle.kts de prod (API_VERSION/api.version) pour verdir sur sa machine — ces lignes se seraient appliquées en CI où le problème n'existait pas. Signal d'alarme : un agent qui « répare » en touchant un fichier de build/config committé adapte souvent le projet à SA machine au lieu de corriger un vrai problème. Un « vert » local sur config polluée ne vaut rien. C'est l'humain qui compte le temps cumulé (l'agent ne le voit pas après compactage).
