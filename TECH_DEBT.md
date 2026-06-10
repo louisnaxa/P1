@@ -193,6 +193,46 @@ with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
 
 ---
 
+## TD-15 — property_holders diverge de TB dès le premier trade de tokens
+
+**Location** : `TradeConsumer.onTrade()` — appelle `settlementService.settleTrade()` (bouge les tokens
+dans TB) mais n'appelle **jamais** `PropertyService.syncHolder()`. `TradeConsumer` n'a pas de référence
+à `PropertyService`. La projection `property_holders` est cohérente avec TB uniquement à l'instant
+de création d'un bien ; elle diverge silencieusement dès qu'un trade échange des tokens de ce bien.
+
+**Conséquence** : tout consommateur de `property_holders` (API cap table, calcul de loyers) lirait
+une vue potentiellement fausse. La divergence est silencieuse : aucune alarme, aucune détection
+automatique dans le code actuel.
+
+**B3 non bloquée** : le contrôle au transfert lit les soldes TB directement (`getBalance`), pas
+`property_holders`. La dette est réelle mais non critique pour B3.
+
+**Remédiation (a) — correction en flux** :
+Dans `TradeConsumer.onTrade()`, si `baseLedger` correspond à un ledger de propriété, appeler
+`propertyService.syncHolder(propertyId, buyerUid, baseLedger)` et
+`propertyService.syncHolder(propertyId, sellerUid, baseLedger)` **avant** `ack.acknowledge()`.
+L'ordre est une contrainte de correction, pas de confort : si syncHolder échoue, l'ack n'est pas
+émis → Kafka re-livre → `settleTrade()` est idempotent (TB retourne EXISTS) → syncHolder rejoué.
+Auto-réparation par re-delivery, exactement comme le principe de correction monétaire existant.
+Implique d'injecter `PropertyService` dans `TradeConsumer` — couplage à décider posément.
+
+**Remédiation (b) — reconstruction depuis TB** :
+Écrire `rebuildPropertyHolders(propertyId)` : pour chaque uid connu (table `users` +
+`SYSTEM_PROPERTY_OWNER_USER`), lire `getBalance(uid, property_ledger_id)` et upsert dans
+`property_holders`. Idempotent, recalculable à tout moment depuis la source de vérité TB.
+Utilisable en incident ou en validation périodique.
+
+**Déclencheur impératif — NON NÉGOCIABLE** :
+TD-15 DOIT être résolue (remédiation a + b) AVANT que `property_holders` soit lue par un
+consommateur en production. En particulier : **la distribution des loyers de B4 ne doit jamais
+utiliser `property_holders` comme source pour un mouvement d'argent réel tant que cette table
+peut diverger de TB.** Une projection fausse distribuant des loyers incorrects = perte financière
+directe et non récupérable.
+
+**Jalon prévu** : avant B4 (distribution des loyers) — non bloquant pour B3.
+
+---
+
 ## TD-14 — Limite 24 bits sur ledgerId (propertyLedgerId)
 
 **Location**: `AccountIds.kt` — `encode(userId, ledgerId, accountType)` :
