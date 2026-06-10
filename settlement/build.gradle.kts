@@ -51,13 +51,30 @@ dependencies {
 // Exclude them from the standard `test` task so `./gradlew build` stays fast.
 // The `chaosTest` task runs them explicitly (also wired into the chaos CI job).
 tasks.test {
-    useJUnitPlatform { excludeTags("integration", "property") }
+    useJUnitPlatform { excludeTags("integration", "property", "rent") }
 }
 
 tasks.register<Test>("propertyTest") {
     description = "Runs @Tag(\"property\") property integration tests against real TigerBeetle + PostgreSQL."
     group = "verification"
     useJUnitPlatform { includeTags("property") }
+    jvmArgs(tasks.test.get().jvmArgs)
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    environment("DOCKER_HOST", System.getenv("DOCKER_HOST") ?: "unix:///var/run/docker.sock")
+    testLogging {
+        events("passed", "failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
+tasks.register<Test>("rentTest") {
+    description = "Runs @Tag(\"rent\") rent distribution tests against real TigerBeetle + PostgreSQL."
+    group = "verification"
+    useJUnitPlatform { includeTags("rent") }
     jvmArgs(tasks.test.get().jvmArgs)
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath

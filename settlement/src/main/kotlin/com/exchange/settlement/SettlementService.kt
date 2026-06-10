@@ -263,6 +263,31 @@ class SettlementService(private val tb: Client) {
     }
 
     /**
+     * Transfer funds between two users' available accounts on the same ledger.
+     * Used for rent distribution: rentPool → holder.
+     * Idempotent: Exists is silently ignored.
+     */
+    fun transfer(fromUserId: Long, toUserId: Long, ledgerId: Int, amount: Long, transferId: Long) {
+        val batch = TransferBatch(1)
+        batch.add()
+        batch.setId(transferId)
+        batch.setDebitAccountId(AccountIds.available(fromUserId, ledgerId))
+        batch.setCreditAccountId(AccountIds.available(toUserId, ledgerId))
+        batch.setAmount(amount)
+        batch.setLedger(ledgerId)
+        batch.setCode(300)
+        val errors = tb.createTransfers(batch)
+        if (errors.length > 0) {
+            while (errors.next()) {
+                val result = errors.getResult()
+                if (result != CreateTransferResult.Exists) {
+                    throw IllegalStateException("transfer failed transferId=$transferId: $result")
+                }
+            }
+        }
+    }
+
+    /**
      * Deterministic transfer ID: (tradeId << 4) | legIndex.
      * 4 bits for legIndex (max 15 legs), remaining 60 bits for tradeId.
      */

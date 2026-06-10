@@ -229,7 +229,11 @@ utiliser `property_holders` comme source pour un mouvement d'argent réel tant q
 peut diverger de TB.** Une projection fausse distribuant des loyers incorrects = perte financière
 directe et non récupérable.
 
-**Jalon prévu** : avant B4 (distribution des loyers) — non bloquant pour B3.
+**B4 non bloquée** : la distribution de loyers lit les soldes TB en direct (`getBalance`), pas
+`property_holders`. TD-15 reste réelle mais non bloquante pour B4. Elle DOIT être résolue avant
+toute feature qui lirait `property_holders` comme source pour un mouvement d'argent.
+
+**Jalon prévu** : avant qu'un consommateur lise `property_holders` pour un paiement réel.
 
 ---
 
@@ -249,6 +253,43 @@ Correction si nécessaire : étendre le schéma d'ID (nouveau cluster TigerBeetl
 d'accountId). N'affecte pas les soldes utilisateurs (la partie haute des 128 bits TB est libre).
 
 **Jalon prévu** : avant d'atteindre ~10 M de biens.
+
+---
+
+## TD-16 — Limites de bits du rentTransferId + contrainte RENT_POOL_UID_BASE
+
+**Location** : `RentService.distributeRent()` + `AccountIds.RENT_POOL_UID_BASE`
+
+**rentTransferId layout (64 bits) :**
+```
+bits 63–48 : 3              (namespace, 16 bits)
+bits 47–16 : distributionId (32 bits → max 4 294 967 295 distributions par bien)
+bits 15–0  : holderIndex    (16 bits → max 65 535 détenteurs par distribution)
+```
+
+**Limites à surveiller :**
+
+1. **holderIndex 16 bits → max 65 535 détenteurs par run de distribution.**
+   C'est la limite pratique à surveiller. Si un bien atteint >65 535 détenteurs agréés,
+   la distribution doit être fractionnée ou le layout étendu. La garde explicite dans
+   `distributeRent` lance une exception avant tout débordement silencieux.
+
+2. **distributionId 32 bits → max ~4.3 milliards de distributions par bien.**
+   À 12 distributions/an : 358 millions d'années. Non urgent, mais nommé.
+
+3. **RENT_POOL_UID_BASE = 10^9 : les `internal_uid` réels doivent rester < 10^9.**
+   Les comptes du pool de loyers utilisent `RENT_POOL_UID_BASE + propertyId` comme
+   `userId` dans l'encodage TB. Si des utilisateurs réels reçoivent des UID ≥ 10^9,
+   leurs comptes TB collisionneraient avec les comptes pool. Cette contrainte doit
+   être documentée dans le schéma de création des utilisateurs (séquence DB bornée).
+
+**Note** : le namespace 3 (bits 63–48 = 3) évite la collision avec les transferIds de trade
+(namespace implicite 0, croissant à partir du bas) tant que commandOffset reste < 2^44.
+Cette limite est la même que TD-2 (matchIndex overflow) — les deux partagent la même
+contrainte de croissance des offsets Kafka.
+
+**Planned milestone** : avant d'approcher 65 535 détenteurs agréés sur un bien, ou avant
+d'enregistrer des UIDs ≥ 10^9 en production.
 
 ---
 

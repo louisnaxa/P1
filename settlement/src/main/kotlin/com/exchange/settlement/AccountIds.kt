@@ -16,8 +16,15 @@ object AccountIds {
     fun encode(userId: Long, ledgerId: Int, accountType: Int): Long =
         (userId shl 32) or (ledgerId.toLong() shl 8) or accountType.toLong()
 
+    // Rent pool: per-property stablecoin account holding earmarked rent for distribution.
+    // userId = RENT_POOL_UID_BASE + propertyId, ledger = stablecoin (quoteLedgerId).
+    // INVARIANT: real user internal_uid MUST remain < RENT_POOL_UID_BASE. See TD-16.
+    const val RENT_POOL_UID_BASE: Long = 1_000_000_000L  // 10^9
+
     fun available(userId: Long, ledgerId: Int): Long = encode(userId, ledgerId, AVAILABLE)
     fun locked(userId: Long, ledgerId: Int): Long = encode(userId, ledgerId, LOCKED)
     fun external(ledgerId: Int): Long = encode(SYSTEM_EXTERNAL_USER, ledgerId, AVAILABLE)
     fun fees(ledgerId: Int): Long = encode(SYSTEM_FEES_USER, ledgerId, AVAILABLE)
+    fun rentPool(propertyId: Long, quoteLedgerId: Int): Long =
+        encode(RENT_POOL_UID_BASE + propertyId, quoteLedgerId, AVAILABLE)
 }
