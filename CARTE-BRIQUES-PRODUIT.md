@@ -61,19 +61,22 @@ préserver la liquidité internationale.
 **Ce lot ne fait PAS** : le contrôle au transfert (c'est la brique 3). Il pose seulement le
 modèle, la lecture, et la transition de statut.
 
-### Brique 2 — Gestion par bien  ◄ EN COURS
+### Brique 2 — Gestion par bien  ✅ FRANCHIE ET PROUVÉE (CI verte, job property)
 
 **Quoi** : chaque bien immobilier devient un actif distinct dans le registre, avec un nombre fixe
 de tokens et une cap table (qui détient quelle fraction). Une juridiction est attachée à chaque bien.
 
-**Dépend de** : le modèle de comptes/ledger TigerBeetle existant. Point à éprouver au cadrage :
-comment le modèle actuel porte de NOMBREUX actifs, et comment se structurent les paires d'échange
-sur le carnet commun.
+**Dépend de** : le modèle de comptes/ledger TigerBeetle existant.
 
 **Rigueur** : money-path (la cap table par bien est de la propriété d'actifs).
 
-**Question ouverte à trancher au cadrage** (produit, pas technique) : un bien = un ledger ?
-combien de biens le modèle supporte-t-il ? les tokens d'un bien se tradent contre quoi (stablecoin) ?
+**Décidé et prouvé** :
+- Un bien = un ledger TigerBeetle dédié (`property_ledger_id`, 24 bits, voir TD-14).
+- `symbols` table : fait correspondre un symbolId exchange-core à `(base_ledger, quote_ledger)`.
+  Remplace le hardcode `baseLedger=10/quoteLedger=11` dans `TradeConsumer`.
+- `property_holders` : projection de TB (reconstructible), mise à jour par `syncHolder` après trade.
+- Émission initiale : 100% des tokens crédités sur `SYSTEM_PROPERTY_OWNER_USER` via `deposit(external→owner)`.
+- Les tokens se tradent contre le stablecoin (ledger partagé, unique pour toutes les paires).
 
 ### Brique 3 — Contrôle au transfert
 
