@@ -12,6 +12,10 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
+    // Postgres — symbols lookup in TradeConsumer (B2)
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    runtimeOnly("org.postgresql:postgresql")
+
     // Kafka
     implementation("org.springframework.kafka:spring-kafka")
 
@@ -38,14 +42,33 @@ dependencies {
     // Testcontainers — versions managed by root extra["testcontainers.version"]
     testImplementation("org.testcontainers:testcontainers")
     testImplementation("org.testcontainers:kafka")
+    testImplementation("org.testcontainers:postgresql")
     testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.postgresql:postgresql")
 }
 
 // Integration tests (@Tag("integration")) require real Docker containers.
 // Exclude them from the standard `test` task so `./gradlew build` stays fast.
 // The `chaosTest` task runs them explicitly (also wired into the chaos CI job).
 tasks.test {
-    useJUnitPlatform { excludeTags("integration") }
+    useJUnitPlatform { excludeTags("integration", "property") }
+}
+
+tasks.register<Test>("propertyTest") {
+    description = "Runs @Tag(\"property\") property integration tests against real TigerBeetle + PostgreSQL."
+    group = "verification"
+    useJUnitPlatform { includeTags("property") }
+    jvmArgs(tasks.test.get().jvmArgs)
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    environment("DOCKER_HOST", System.getenv("DOCKER_HOST") ?: "unix:///var/run/docker.sock")
+    testLogging {
+        events("passed", "failed", "skipped")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
 }
 
 tasks.register<Test>("chaosTest") {

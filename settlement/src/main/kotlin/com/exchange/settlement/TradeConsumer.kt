@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit
 class TradeConsumer(
     private val settlementService: SettlementService,
     private val reconciliation: ReconciliationService,
+    private val symbolRepository: SymbolRepository,
     @Value("\${spring.kafka.bootstrap-servers}") private val bootstrapServers: String
 ) : ConsumerSeekAware {
 
@@ -88,9 +89,9 @@ class TradeConsumer(
         val trade = record.value()
         log.info("Received trade {} symbol={} offset={}", trade.tradeId, trade.symbolId, record.offset())
 
-        // TODO: symbol → (baseLedger, quoteLedger) mapping will be managed in M2
-        val baseLedger = 10
-        val quoteLedger = 11
+        val ledgers = symbolRepository.getLedgers(trade.symbolId)
+        val baseLedger = ledgers.baseLedgerId
+        val quoteLedger = ledgers.quoteLedgerId
 
         // Ensure all four participant accounts exist before settling (gap-2 prevention).
         // ORDER IS A CORRECTNESS GUARANTEE, NOT A CONVENIENCE: all ensureAccount calls

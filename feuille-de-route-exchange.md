@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 10 juin 2026 :** M0–M4 socle et **brique B1 (statut des détenteurs) franchis et prouvés** (CI verte). Jalon courant : **brique B2 — gestion par bien**.
+> **État au 10 juin 2026 :** M0–M4 socle et **brique B1 (statut des détenteurs) franchis et prouvés** (CI verte). Jalon courant : **brique B2 — gestion par bien** (codée, CI en cours de validation).
 
 ---
 

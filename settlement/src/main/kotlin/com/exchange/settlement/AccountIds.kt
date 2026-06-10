@@ -10,6 +10,8 @@ object AccountIds {
 
     const val SYSTEM_EXTERNAL_USER: Long = 0L
     const val SYSTEM_FEES_USER: Long = 1L
+    // Initial holder of 100% of a property's tokens on creation (represents the issuer).
+    const val SYSTEM_PROPERTY_OWNER_USER: Long = 2L
 
     fun encode(userId: Long, ledgerId: Int, accountType: Int): Long =
         (userId shl 32) or (ledgerId.toLong() shl 8) or accountType.toLong()

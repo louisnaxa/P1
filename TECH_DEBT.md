@@ -193,6 +193,25 @@ with réconciliation hors-bande. N'affecte pas les soldes virtuels utilisateurs.
 
 ---
 
+## TD-14 — Limite 24 bits sur ledgerId (propertyLedgerId)
+
+**Location**: `AccountIds.kt` — `encode(userId, ledgerId, accountType)` :
+```kotlin
+(userId shl 32) or (ledgerId.toLong() shl 8) or accountType.toLong()
+```
+
+`ledgerId` occupe les bits 8–31 (24 bits). Valeur max : 16 777 215.
+Les ledger IDs de propriétés actuels sont de petits entiers — sûrs. Si la plateforme atteint
+plusieurs millions de biens, la limite sera franchie. Débordement silencieux : pas d'exception,
+de mauvais accountIds dans TigerBeetle.
+
+Correction si nécessaire : étendre le schéma d'ID (nouveau cluster TigerBeetle ou migration
+d'accountId). N'affecte pas les soldes utilisateurs (la partie haute des 128 bits TB est libre).
+
+**Jalon prévu** : avant d'atteindre ~10 M de biens.
+
+---
+
 ## TD-12 — ~~Test isolé layer-2 manquant : même commande à deux offsets Kafka différents~~ ✓ CLOSED
 
 **Fixed**: `settlement:AdjustBalanceIdempotencyTest` — D1 + D2 prouvent la protection contre

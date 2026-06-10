@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: settlement
+  datasource:
+    url: jdbc:postgresql://localhost:5432/exchange
+    username: exchange
+    password: exchange
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
