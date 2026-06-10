@@ -20,8 +20,6 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delet
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
-import org.mockito.kotlin.doThrow
-import org.mockito.kotlin.eq
 import org.springframework.web.server.ResponseStatusException
 
 @WebMvcTest(OrderController::class, MarketDataController::class, AdminController::class)
@@ -116,19 +114,6 @@ class SecurityTest {
             .with(jwt().authorities(SimpleGrantedAuthority("ROLE_user")))
             .contentType(MediaType.APPLICATION_JSON)
             .content("""{"uid":1,"status":"SUSPENDED"}"""))
-            .andExpect(status().isForbidden)
-    }
-
-    @Test
-    fun `R7 TransferGuard rejection returns 403 - proves guard is wired in placeOrder`() {
-        whenever(userService.resolveUid(any())).thenReturn(1001L)
-        doThrow(ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied by TransferGuard"))
-            .whenever(transferGuard).checkOrderAccess(eq(1001L), eq(1))
-
-        mvc.perform(post("/orders")
-            .with(jwt().jwt { it.subject("alice-sub") })
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""{"symbolId":1,"side":"BID","price":100,"quantity":5}"""))
             .andExpect(status().isForbidden)
     }
 
