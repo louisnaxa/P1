@@ -98,6 +98,23 @@ class SecurityTest {
     }
 
     @Test
+    fun `POST admin account-status without token returns 401`() {
+        mvc.perform(post("/admin/account-status")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"uid":1,"status":"SUSPENDED"}"""))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun `POST admin account-status with user token (no admin role) returns 403`() {
+        mvc.perform(post("/admin/account-status")
+            .with(jwt().authorities(SimpleGrantedAuthority("ROLE_user")))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"uid":1,"status":"SUSPENDED"}"""))
+            .andExpect(status().isForbidden)
+    }
+
+    @Test
     fun `Alice token - command uid comes from token not from request body`() {
         whenever(userService.resolveUid("alice-sub")).thenReturn(1001L)
         var publishedUid: Long? = null

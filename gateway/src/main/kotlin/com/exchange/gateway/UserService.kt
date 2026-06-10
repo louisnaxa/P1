@@ -6,20 +6,25 @@ import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
 import java.util.concurrent.ConcurrentHashMap
 
+data class ResolvedAccount(
+    val uid: Long,
+    val status: AccountStatus,
+    val jurisdiction: String?
+)
+
 /**
  * Resolves a Keycloak subject (JWT "sub" claim) to the internal Long uid used
- * by exchange-core and TigerBeetle.
+ * by exchange-core and TigerBeetle, and reads the current account status.
  *
- * The mapping lives in the `users` table (keycloak_sub → internal_uid).
- * An admin must insert a row there when provisioning a new user account.
+ * The uid mapping is immutable once set — cached in memory. The account_status
+ * is mutable and is NEVER cached: it is always read fresh from the DB at the
+ * point of control, before any durable write.
  *
- * Sub → uid results are cached in memory after the first lookup.
- * Cache invalidation is not required: keycloak_sub and internal_uid are both
- * immutable once set (no user renames, no uid reassignment).
+ * Invariant: account_status must never enter the Kafka journal nor the
+ * TigerBeetle accountId. Both are immutable identifiers that underpin
+ * idempotence — a status change would orphan all historical records.
  *
- * Unknown sub: throws 403.  NEVER falls back to a default uid — a sub not in
- * the table means the user has no registered account, and the order must be
- * rejected before reaching Kafka.
+ * Unknown sub: throws 403. NEVER falls back to a default uid.
  */
 @Service
 class UserService(private val jdbc: JdbcTemplate) {
@@ -41,5 +46,46 @@ class UserService(private val jdbc: JdbcTemplate) {
 
         cache[keycloakSub] = uid
         return uid
+    }
+
+    /**
+     * Reads the current status and jurisdiction of an account by uid.
+     * NOT cached — account_status is mutable. Always hits the DB.
+     * Called at the point of control, before any durable write.
+     */
+    fun resolveStatus(uid: Long): ResolvedAccount {
+        return jdbc.query(
+            "SELECT internal_uid, account_status, jurisdiction FROM users WHERE internal_uid = ?",
+            { rs, _ -> ResolvedAccount(
+                uid  = rs.getLong("internal_uid"),
+                status = AccountStatus.valueOf(rs.getString("account_status")),
+                jurisdiction = rs.getString("jurisdiction")
+            )},
+            uid
+        ).firstOrNull()
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found: uid=$uid")
+    }
+
+    /**
+     * Transitions an account to a new status and writes the audit trail.
+     * CITIZEN_APPROVED requires a non-null jurisdiction, enforced both here
+     * and by the DB CHECK constraint. actorSub identifies the admin making the change.
+     */
+    fun setAccountStatus(uid: Long, newStatus: AccountStatus, jurisdiction: String?, actorSub: String) {
+        if (newStatus == AccountStatus.CITIZEN_APPROVED && jurisdiction.isNullOrBlank()) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "CITIZEN_APPROVED requires a jurisdiction")
+        }
+        val updated = jdbc.update(
+            """UPDATE users
+               SET account_status    = ?,
+                   jurisdiction      = ?,
+                   status_updated_at = NOW(),
+                   status_updated_by = ?
+               WHERE internal_uid = ?""",
+            newStatus.name, jurisdiction, actorSub, uid
+        )
+        if (updated == 0) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found: uid=$uid")
+        }
     }
 }
