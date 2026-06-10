@@ -4,7 +4,7 @@ Document de travail vivant. À tenir à jour et committer au fil des portes fran
 **Règle : on garde ce fichier au niveau « jalon + condition de validation ». Le détail va ailleurs
 (principes → `CLAUDE.md`, dette → `TECH_DEBT.md`, implémentation → le code).**
 
-> **État au 10 juin 2026 :** M0–M4 socle, **brique B1 (statut des détenteurs)** et **brique B2 (gestion par bien) franchis et prouvés** (CI verte). Jalon courant : **brique B3 — contrôle au transfert**.
+> **État au 10 juin 2026 :** M0–M4 socle, **briques B1 (statut des détenteurs), B2 (gestion par bien) et B3 (contrôle au transfert) franchis et prouvés** (CI verte). Jalon courant : **brique B4 — droits économiques**.
 
 ---
 
@@ -20,8 +20,7 @@ Ordre de construction décidé. Aucune case cochée : rien n'est encore prouvé.
 
 - [x] **Brique 1 — Statut des détenteurs** *(money-path)* — prouvé en CI : modèle Postgres (UNVERIFIED/FOREIGN_SPECULATIVE/CITIZEN_APPROVED/SUSPENDED + juridiction + audit trail), contraintes CHECK rejetant les cas invalides prouvées par bypass du guard applicatif (`AccountStatusIntegrationTest`, job `status`)
 - [x] **Brique 2 — Gestion par bien** *(money-path)* — prouvé en CI : tables `properties`/`symbols`/`property_holders`, `SymbolRepository` remplace le TODO hardcodé, `PropertyService` émet 100% des tokens sur création (TB réel), 4 tests P1–P4 (`PropertyIntegrationTest`, job `property`)
-- [ ] **Brique 3 — Contrôle au transfert** *(money-path, rigueur maximale, tests de refus)*
-- [ ] **Brique 3 — Contrôle au transfert** *(money-path, rigueur maximale, tests de refus)*
+- [x] **Brique 3 — Contrôle au transfert** *(money-path)* — prouvé en CI : `TransferGuard` (statut × juridiction du bien), R1–R6 contre real PostgreSQL (`TransferGuardIntegrationTest`, job `transfer`), R7 câblage wiring (`TransferGuardWiringTest`, job `build`) ; inventaire : `PLACE_ORDER` seul chemin gardé, `CANCEL_ORDER` et `ADJUST_BALANCE` hors périmètre par construction
 - [ ] **Brique 4 — Droits économiques** (distribution loyers / seuil 100 %)
 
 Voir `CARTE-BRIQUES-PRODUIT.md` pour la carte détaillée.

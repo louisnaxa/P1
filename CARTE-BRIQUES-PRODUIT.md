@@ -78,7 +78,7 @@ de tokens et une cap table (qui détient quelle fraction). Une juridiction est a
 - Émission initiale : 100% des tokens crédités sur `SYSTEM_PROPERTY_OWNER_USER` via `deposit(external→owner)`.
 - Les tokens se tradent contre le stablecoin (ledger partagé, unique pour toutes les paires).
 
-### Brique 3 — Contrôle au transfert
+### Brique 3 — Contrôle au transfert  ✅ FRANCHIE ET PROUVÉE (CI verte, jobs build + transfer)
 
 **Quoi** : refuser ou autoriser un transfert selon le statut du détenteur ET la juridiction du
 bien. Un étranger ne peut pas recevoir un droit réservé aux citoyens ; un citoyen ne peut toucher
@@ -93,8 +93,21 @@ consumer/engine (qui rejouent le journal et casseraient l'idempotence). Principe
 
 **Rigueur** : money-path maximal. C'est LE cœur démontrable — on prouve le refus dans chaque cas.
 
-**Jalon de démonstration** : à la fin de cette brique, le levier existe — un carnet commun où deux
-classes tradent des fractions de biens réels avec des droits différenciés, vérifiés, infalsifiables.
+**Décidé et prouvé** :
+- `TransferGuard` service séparé, injecté dans `OrderController` — garde appelé AVANT `publisher.publish()`.
+- Règles R1–R6 prouvées contre real PostgreSQL (`TransferGuardIntegrationTest`, job `transfer`) :
+  - R1 UNVERIFIED → refus ; R2 SUSPENDED → refus
+  - R3 FOREIGN_SPECULATIVE → passage pour tout symbole (même inconnu, retour rapide)
+  - R4 CITIZEN_APPROVED(J) × bien(J) → passage ; R5 CITIZEN_APPROVED(J) × bien(J') → refus
+  - R6 symbole inconnu → refus (fail-closed : symbole non qualifiable = refus, jamais passage)
+- R7 câblage wiring (`TransferGuardWiringTest`, job `build`) : guard rejection propagée en 403.
+- Inventaire des chemins : `PLACE_ORDER` est le seul chemin gardé. `CANCEL_ORDER` hors périmètre
+  (libère un verrou posé après avoir passé le garde — pas un nouveau transfert). `ADJUST_BALANCE`
+  hors périmètre (admin-only, `ROLE_admin`).
+- Retrait stablecoin : reporté (hors B3, porte distincte non encore franchie).
+
+**Levier démontrable atteint** : un carnet commun où deux classes tradent des fractions de biens
+réels avec des droits différenciés, vérifiés, infalsifiables.
 
 ### Brique 4 — Droits économiques (loyers + seuil 100 %)
 
